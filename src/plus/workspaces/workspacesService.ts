@@ -1,6 +1,7 @@
+import { getSupportedWorkspacesPathMappingProvider } from '@env/providers';
 import type { CancellationToken, Event, MessageItem, QuickPickItem } from 'vscode';
 import { Disposable, EventEmitter, ProgressLocation, Uri, window, workspace } from 'vscode';
-import { getSupportedWorkspacesPathMappingProvider } from '@env/providers';
+import { SubscriptionState } from '../../constants.subscription';
 import type { Container } from '../../container';
 import type { GitRemote } from '../../git/models/remote';
 import { RemoteResourceType } from '../../git/models/remoteResource';
@@ -8,9 +9,8 @@ import { Repository } from '../../git/models/repository';
 import { showRepositoriesPicker } from '../../quickpicks/repositoryPicker';
 import { log } from '../../system/decorators/log';
 import { normalizePath } from '../../system/path';
-import type { OpenWorkspaceLocation } from '../../system/utils';
-import { openWorkspace } from '../../system/utils';
-import { SubscriptionState } from '../gk/account/subscription';
+import type { OpenWorkspaceLocation } from '../../system/vscode/utils';
+import { openWorkspace } from '../../system/vscode/utils';
 import type { SubscriptionChangeEvent } from '../gk/account/subscriptionService';
 import type { ServerConnection } from '../gk/serverConnection';
 import type {
@@ -116,8 +116,8 @@ export class WorkspacesService implements Disposable {
 
 		let filteredSharedWorkspaceCount = 0;
 		const isPlusEnabled =
-			subscription.state === SubscriptionState.FreeInPreviewTrial ||
-			subscription.state === SubscriptionState.FreePlusInTrial ||
+			subscription.state === SubscriptionState.ProPreview ||
+			subscription.state === SubscriptionState.ProTrial ||
 			subscription.state === SubscriptionState.Paid;
 
 		if (workspaces?.length) {
@@ -398,12 +398,12 @@ export class WorkspacesService implements Disposable {
 		if (parentUri == null || cancellation?.isCancellationRequested) return undefined;
 
 		try {
-			return this.container.git.findRepositories(parentUri, {
+			return await this.container.git.findRepositories(parentUri, {
 				cancellation: cancellation,
 				depth: 1,
 				silent: true,
 			});
-		} catch (ex) {
+		} catch (_ex) {
 			return undefined;
 		}
 	}
@@ -479,7 +479,7 @@ export class WorkspacesService implements Disposable {
 
 		const repoPath = repo.uri.fsPath;
 
-		const remotes = await repo.getRemotes();
+		const remotes = await repo.git.getRemotes();
 		const remoteUrls: string[] = [];
 		for (const remote of remotes) {
 			const remoteUrl = remote.provider?.url({ type: RemoteResourceType.Repo });
@@ -551,7 +551,7 @@ export class WorkspacesService implements Disposable {
 		if (options?.repos != null && options.repos.length > 0) {
 			// Currently only GitHub is supported.
 			for (const repo of options.repos) {
-				const repoRemotes = await repo.getRemotes({ filter: r => r.domain === 'github.com' });
+				const repoRemotes = await repo.git.getRemotes({ filter: r => r.domain === 'github.com' });
 				if (repoRemotes.length === 0) {
 					await window.showErrorMessage(
 						`Only GitHub is supported for this operation. Please ensure all open repositories are hosted on GitHub.`,
@@ -791,7 +791,7 @@ export class WorkspacesService implements Disposable {
 	): Promise<Repository[]> {
 		const validRepos: Repository[] = [];
 		for (const repo of repos) {
-			const matchingRemotes = await repo.getRemotes({
+			const matchingRemotes = await repo.git.getRemotes({
 				filter: r => r.provider?.id === cloudWorkspaceProviderTypeToRemoteProviderId[provider],
 			});
 			if (matchingRemotes.length) {
@@ -917,7 +917,7 @@ export class WorkspacesService implements Disposable {
 					? repoOrPath
 					: await this.container.git.getOrOpenRepository(Uri.file(repoOrPath), { closeOnOpen: true });
 			if (repo == null) continue;
-			const remote = (await repo.getRemote('origin')) || (await repo.getRemotes())?.[0];
+			const remote = (await repo.git.getRemote('origin')) || (await repo.git.getRemotes())?.[0];
 			const remoteDescriptor = getRemoteDescriptor(remote);
 			if (remoteDescriptor == null) continue;
 			repoInputs.push({
@@ -1052,7 +1052,7 @@ export class WorkspacesService implements Disposable {
 			reposPathMap.set(normalizePath(repo.uri.fsPath.toLowerCase()), repo);
 
 			if (workspace instanceof CloudWorkspace) {
-				const remotes = await repo.getRemotes();
+				const remotes = await repo.git.getRemotes();
 				for (const remote of remotes) {
 					const remoteDescriptor = getRemoteDescriptor(remote);
 					if (remoteDescriptor == null) continue;

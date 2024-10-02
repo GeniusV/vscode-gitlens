@@ -1,5 +1,5 @@
 import type { QuickPickItem, ThemeIcon, Uri } from 'vscode';
-import type { Subscription } from '../../plus/gk/account/subscription';
+import { proPreviewLengthInDays, proTrialLengthInDays } from '../../constants.subscription';
 
 export enum Directive {
 	Back,
@@ -31,13 +31,14 @@ export function createDirectiveQuickPickItem(
 		label?: string;
 		description?: string;
 		detail?: string;
+		buttons?: QuickPickItem['buttons'];
 		iconPath?: Uri | { light: Uri; dark: Uri } | ThemeIcon;
-		subscription?: Subscription;
 		onDidSelect?: () => void | Promise<void>;
 	},
 ) {
 	let label = options?.label;
 	let detail = options?.detail;
+	let description = options?.description;
 	if (label == null) {
 		switch (directive) {
 			case Directive.Back:
@@ -60,11 +61,11 @@ export function createDirectiveQuickPickItem(
 				break;
 			case Directive.StartPreview:
 				label = 'Continue';
-				detail = 'Continuing gives you 3 days to preview this and other local Pro features';
+				detail = `Continuing gives you ${proPreviewLengthInDays} days to preview this and other local Pro features`;
 				break;
 			case Directive.StartProTrial:
 				label = 'Start Pro Trial';
-				detail = 'Start your free 7-day Pro trial for full access to Pro features';
+				detail = `Start your free ${proTrialLengthInDays}-day Pro trial for full access to Pro features`;
 				break;
 			case Directive.RequiresVerification:
 				label = 'Resend Email';
@@ -72,16 +73,21 @@ export function createDirectiveQuickPickItem(
 				break;
 			case Directive.RequiresPaidSubscription:
 				label = 'Upgrade to Pro';
-				detail = 'Upgrading to a paid plan is required to use this Pro feature';
+				if (detail != null) {
+					description ??= ' \u2014\u00a0\u00a0 a paid plan is required to use this Pro feature';
+				} else {
+					detail = 'Upgrading to a paid plan is required to use this Pro feature';
+				}
 				break;
 		}
 	}
 
 	const item: DirectiveQuickPickItem = {
 		label: label,
-		description: options?.description,
+		description: description,
 		detail: detail,
 		iconPath: options?.iconPath,
+		buttons: options?.buttons,
 		alwaysShow: true,
 		picked: picked,
 		directive: directive,

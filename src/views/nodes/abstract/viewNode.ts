@@ -1,5 +1,5 @@
 import type { CancellationToken, Command, Disposable, Event, TreeItem } from 'vscode';
-import type { TreeViewNodeTypes } from '../../../constants';
+import type { TreeViewNodeTypes } from '../../../constants.views';
 import type { GitUri } from '../../../git/gitUri';
 import type { GitBranch } from '../../../git/models/branch';
 import type { GitCommit } from '../../../git/models/commit';
@@ -12,6 +12,11 @@ import type { Repository } from '../../../git/models/repository';
 import type { GitTag } from '../../../git/models/tag';
 import type { GitWorktree } from '../../../git/models/worktree';
 import type { Draft } from '../../../gk/models/drafts';
+import type { LaunchpadGroup, LaunchpadItem } from '../../../plus/launchpad/launchpadProvider';
+import {
+	launchpadCategoryToGroupMap,
+	sharedCategoryToLaunchpadActionCategoryMap,
+} from '../../../plus/launchpad/launchpadProvider';
 import type {
 	CloudWorkspace,
 	CloudWorkspaceRepositoryDescriptor,
@@ -22,6 +27,7 @@ import { gate } from '../../../system/decorators/gate';
 import { debug, logName } from '../../../system/decorators/log';
 import { is as isA } from '../../../system/function';
 import { getLoggableName } from '../../../system/logger';
+import type { LaunchpadItemNode } from '../../launchpadView';
 import type { View } from '../../viewBase';
 import type { BranchNode } from '../branchNode';
 import type { BranchTrackingStatusFilesNode } from '../branchTrackingStatusFilesNode';
@@ -35,6 +41,7 @@ import type { FileRevisionAsCommitNode } from '../fileRevisionAsCommitNode';
 import type { FolderNode } from '../folderNode';
 import type { LineHistoryTrackerNode } from '../lineHistoryTrackerNode';
 import type { MergeConflictFileNode } from '../mergeConflictFileNode';
+import type { PullRequestNode } from '../pullRequestNode';
 import type { RepositoryNode } from '../repositoryNode';
 import type { ResultsCommitsNode } from '../resultsCommitsNode';
 import type { ResultsFileNode } from '../resultsFileNode';
@@ -76,6 +83,7 @@ export const enum ContextValues {
 	FileHistory = 'gitlens:history:file',
 	Folder = 'gitlens:folder',
 	Grouping = 'gitlens:grouping',
+	LaunchpadItem = 'gitlens:launchpad:item',
 	LineHistory = 'gitlens:history:line',
 	Merge = 'gitlens:merge',
 	MergeConflictCurrentChanges = 'gitlens:merge-conflict:current',
@@ -127,6 +135,8 @@ export interface AmbientContext {
 	readonly contributor?: GitContributor;
 	readonly draft?: Draft;
 	readonly file?: GitFile;
+	readonly launchpadGroup?: LaunchpadGroup;
+	readonly launchpadItem?: LaunchpadItem;
 	readonly pullRequest?: PullRequest;
 	readonly reflog?: GitReflogRecord;
 	readonly remote?: GitRemote;
@@ -140,7 +150,7 @@ export interface AmbientContext {
 	readonly wsRepositoryDescriptor?: CloudWorkspaceRepositoryDescriptor | LocalWorkspaceRepositoryDescriptor;
 	readonly worktree?: GitWorktree;
 
-	readonly openWorktreeBranches?: Set<string>;
+	readonly worktreesByBranch?: Map<string, GitWorktree>;
 }
 
 export function getViewNodeId(type: string, context: AmbientContext): string {
@@ -174,6 +184,16 @@ export function getViewNodeId(type: string, context: AmbientContext): string {
 	}
 	if (context.branchStatusUpstreamType != null) {
 		uniqueness += `/branch-status-direction/${context.branchStatusUpstreamType}`;
+	}
+	if (context.launchpadGroup != null) {
+		uniqueness += `/lp/${context.launchpadGroup}`;
+		if (context.launchpadItem != null) {
+			uniqueness += `/${context.launchpadItem.type}/${context.launchpadItem.uuid}`;
+		}
+	} else if (context.launchpadItem != null) {
+		uniqueness += `/lp/${launchpadCategoryToGroupMap.get(
+			sharedCategoryToLaunchpadActionCategoryMap.get(context.launchpadItem.suggestedActionCategory)!,
+		)}/${context.launchpadItem.type}/${context.launchpadItem.uuid}`;
 	}
 	if (context.pullRequest != null) {
 		uniqueness += `/pr/${context.pullRequest.id}`;
@@ -406,8 +426,12 @@ type TreeViewNodesByType = {
 		? FileRevisionAsCommitNode
 		: T extends 'folder'
 		? FolderNode
+		: T extends 'launchpad-item'
+		? LaunchpadItemNode
 		: T extends 'line-history-tracker'
 		? LineHistoryTrackerNode
+		: T extends 'pullrequest'
+		? PullRequestNode
 		: T extends 'repository'
 		? RepositoryNode
 		: T extends 'repo-folder'

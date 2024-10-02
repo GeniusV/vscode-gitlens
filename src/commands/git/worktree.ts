@@ -18,6 +18,7 @@ import { uncommitted, uncommittedStaged } from '../../git/models/constants';
 import type { GitReference } from '../../git/models/reference';
 import {
 	getNameWithoutRemote,
+	getReferenceFromBranch,
 	getReferenceLabel,
 	isBranchReference,
 	isRevisionReference,
@@ -25,17 +26,19 @@ import {
 } from '../../git/models/reference';
 import type { Repository } from '../../git/models/repository';
 import type { GitWorktree } from '../../git/models/worktree';
+import { getWorktreeForBranch } from '../../git/models/worktree';
 import { showGenericErrorMessage } from '../../messages';
 import type { QuickPickItemOfT } from '../../quickpicks/items/common';
 import { createQuickPickSeparator } from '../../quickpicks/items/common';
 import { Directive } from '../../quickpicks/items/directive';
 import type { FlagsQuickPickItem } from '../../quickpicks/items/flags';
 import { createFlagsQuickPickItem } from '../../quickpicks/items/flags';
-import { configuration } from '../../system/configuration';
-import { basename, isDescendant } from '../../system/path';
+import { basename } from '../../system/path';
 import type { Deferred } from '../../system/promise';
 import { pluralize, truncateLeft } from '../../system/string';
-import { getWorkspaceFriendlyPath, openWorkspace, revealInFileExplorer } from '../../system/utils';
+import { configuration } from '../../system/vscode/configuration';
+import { isDescendant } from '../../system/vscode/path';
+import { getWorkspaceFriendlyPath, openWorkspace, revealInFileExplorer } from '../../system/vscode/utils';
 import type { ViewsWithRepositoryFolders } from '../../views/viewBase';
 import type {
 	AsyncStepResultGenerator,
@@ -66,6 +69,7 @@ import {
 	pickWorktreesStep,
 	pickWorktreeStep,
 } from '../quickCommand.steps';
+import { getSteps } from '../quickWizard.utils';
 
 interface Context {
 	repos: Repository[];
@@ -84,6 +88,7 @@ type CreateFlags = '--force' | '-b' | '--detach' | '--direct';
 interface CreateState {
 	subcommand: 'create';
 	repo: string | Repository;
+	worktree?: GitWorktree;
 	uri: Uri;
 	reference?: GitReference;
 	addRemote?: { name: string; url: string };
@@ -96,9 +101,12 @@ interface CreateState {
 	overrides?: {
 		title?: string;
 	};
+
+	onWorkspaceChanging?: (() => Promise<void>) | (() => void);
+	skipWorktreeConfirmations?: boolean;
 }
 
-type DeleteFlags = '--force';
+type DeleteFlags = '--force' | '--delete-branches';
 
 interface DeleteState {
 	subcommand: 'delete';
@@ -106,6 +114,7 @@ interface DeleteState {
 	uris: Uri[];
 	flags: DeleteFlags[];
 
+	startingFromBranchDelete?: boolean;
 	overrides?: {
 		title?: string;
 	};
@@ -129,6 +138,9 @@ interface OpenState {
 			placeholder?: string;
 		};
 	};
+
+	onWorkspaceChanging?: (() => Promise<void>) | (() => void);
+	skipWorktreeConfirmations?: boolean;
 }
 
 interface CopyChangesState {
@@ -368,7 +380,7 @@ export class WorktreeGitCommand extends QuickCommand<State> {
 
 	private async *createCommandSteps(state: CreateStepState, context: Context): AsyncStepResultGenerator<void> {
 		if (context.defaultUri == null) {
-			context.defaultUri = await state.repo.getWorktreesDefaultUri();
+			context.defaultUri = await state.repo.git.getWorktreesDefaultUri();
 		}
 
 		if (state.flags == null) {
@@ -387,7 +399,7 @@ export class WorktreeGitCommand extends QuickCommand<State> {
 				const result = yield* pickBranchOrTagStep(state, context, {
 					placeholder: context =>
 						`Choose a branch${context.showTags ? ' or tag' : ''} to create the new worktree for`,
-					picked: state.reference?.ref ?? (await state.repo.getBranch())?.ref,
+					picked: state.reference?.ref ?? (await state.repo.git.getBranch())?.ref,
 					titleContext: ' for',
 					value: isRevisionReference(state.reference) ? state.reference.ref : undefined,
 				});
@@ -399,6 +411,58 @@ export class WorktreeGitCommand extends QuickCommand<State> {
 
 			if (state.uri == null) {
 				state.uri = context.defaultUri!;
+			}
+
+			state.worktree =
+				isBranchReference(state.reference) && !state.reference.remote
+					? await getWorktreeForBranch(state.repo, state.reference.name, undefined, context.worktrees)
+					: undefined;
+
+			const isRemoteBranch = isBranchReference(state.reference) && state.reference?.remote;
+			if ((isRemoteBranch || state.worktree != null) && !state.flags.includes('-b')) {
+				state.flags.push('-b');
+			}
+
+			if (isRemoteBranch) {
+				state.createBranch = getNameWithoutRemote(state.reference);
+				const branch = await state.repo.git.getBranch(state.createBranch);
+				if (branch != null && !branch.remote) {
+					state.createBranch = branch.name;
+				}
+			}
+
+			if (state.flags.includes('-b')) {
+				let createBranchOverride: string | undefined;
+				if (state.createBranch != null) {
+					let valid = await this.container.git.validateBranchOrTagName(state.repo.path, state.createBranch);
+					if (valid) {
+						const alreadyExists = await state.repo.git.getBranch(state.createBranch);
+						valid = alreadyExists == null;
+					}
+
+					if (!valid) {
+						createBranchOverride = state.createBranch;
+						state.createBranch = undefined;
+					}
+				}
+
+				if (state.createBranch == null) {
+					const result = yield* inputBranchNameStep(state, context, {
+						titleContext: ` and New Branch from ${getReferenceLabel(state.reference, {
+							capitalize: true,
+							icon: false,
+							label: state.reference.refType !== 'branch',
+						})}`,
+						value: createBranchOverride ?? getNameWithoutRemote(state.reference),
+					});
+					if (result === StepResultBreak) {
+						// Clear the flags, since we can backup after the confirm step below (which is non-standard)
+						state.flags = [];
+						continue;
+					}
+
+					state.createBranch = result;
+				}
 			}
 
 			if (this.confirm(state.confirm)) {
@@ -446,51 +510,6 @@ export class WorktreeGitCommand extends QuickCommand<State> {
 			// Reset any confirmation overrides
 			state.confirm = true;
 			this._canSkipConfirmOverride = undefined;
-
-			const isRemoteBranch = state.reference?.refType === 'branch' && state.reference?.remote;
-			if (isRemoteBranch && !state.flags.includes('-b')) {
-				state.flags.push('-b');
-
-				state.createBranch = getNameWithoutRemote(state.reference);
-				const branch = await state.repo.getBranch(state.createBranch);
-				if (branch != null) {
-					state.createBranch = state.reference.name;
-				}
-			}
-
-			if (state.flags.includes('-b')) {
-				let createBranchOverride: string | undefined;
-				if (state.createBranch != null) {
-					let valid = await this.container.git.validateBranchOrTagName(state.repo.path, state.createBranch);
-					if (valid) {
-						const alreadyExists = await state.repo.getBranch(state.createBranch);
-						valid = alreadyExists == null;
-					}
-
-					if (!valid) {
-						createBranchOverride = state.createBranch;
-						state.createBranch = undefined;
-					}
-				}
-
-				if (state.createBranch == null) {
-					const result = yield* inputBranchNameStep(state, context, {
-						titleContext: ` and New Branch from ${getReferenceLabel(state.reference, {
-							capitalize: true,
-							icon: false,
-							label: state.reference.refType !== 'branch',
-						})}`,
-						value: createBranchOverride ?? state.createBranch ?? getNameWithoutRemote(state.reference),
-					});
-					if (result === StepResultBreak) {
-						// Clear the flags, since we can backup after the confirm step below (which is non-standard)
-						state.flags = [];
-						continue;
-					}
-
-					state.createBranch = result;
-				}
-			}
 
 			const uri = state.flags.includes('--direct')
 				? state.uri
@@ -609,6 +628,8 @@ export class WorktreeGitCommand extends QuickCommand<State> {
 						confirm: action === 'prompt',
 						openOnly: true,
 						overrides: { disallowBack: true },
+						skipWorktreeConfirmations: state.skipWorktreeConfirmations,
+						onWorkspaceChanging: state.onWorkspaceChanging,
 					} satisfies OpenStepState,
 					context,
 				);
@@ -695,42 +716,30 @@ export class WorktreeGitCommand extends QuickCommand<State> {
 		const isRemoteBranch = isBranchReference(state.reference) && state.reference?.remote;
 
 		type StepType = FlagsQuickPickItem<CreateFlags, CreateConfirmationChoice>;
+		const defaultOption = createFlagsQuickPickItem<CreateFlags, Uri>(
+			state.flags,
+			state.createBranch ? ['-b'] : [],
+			{
+				label: isRemoteBranch
+					? 'Create Worktree for New Local Branch'
+					: isBranch
+					  ? 'Create Worktree for Branch'
+					  : context.title,
+				description: '',
+				detail: `Will create worktree in $(folder) ${
+					state.createBranch ? recommendedNewBranchFriendlyPath : recommendedFriendlyPath
+				}`,
+			},
+			recommendedRootUri,
+		);
 
 		const confirmations: StepType[] = [];
 		if (!createDirectlyInFolder) {
-			if (!state.createBranch) {
-				confirmations.push(
-					createFlagsQuickPickItem<CreateFlags, Uri>(
-						state.flags,
-						[],
-						{
-							label: isRemoteBranch
-								? 'Create Worktree for New Local Branch'
-								: isBranch
-								  ? 'Create Worktree for Branch'
-								  : context.title,
-							description: '',
-							detail: `Will create worktree in $(folder) ${recommendedFriendlyPath}`,
-						},
-						recommendedRootUri,
-					),
-				);
+			if (state.skipWorktreeConfirmations) {
+				return [defaultOption.context, defaultOption.item];
 			}
 
-			confirmations.push(
-				createFlagsQuickPickItem<CreateFlags, Uri>(
-					state.flags,
-					['-b'],
-					{
-						label: isRemoteBranch
-							? 'Create Worktree for New Local Branch Named...'
-							: 'Create Worktree for New Branch Named...',
-						description: '',
-						detail: `Will create worktree in $(folder) ${recommendedNewBranchFriendlyPath}`,
-					},
-					recommendedRootUri,
-				),
-			);
+			confirmations.push(defaultOption);
 		} else {
 			if (!state.createBranch) {
 				confirmations.push(
@@ -821,7 +830,7 @@ export class WorktreeGitCommand extends QuickCommand<State> {
 	}
 
 	private async *deleteCommandSteps(state: DeleteStepState, context: Context): StepGenerator {
-		context.worktrees = await state.repo.getWorktrees();
+		context.worktrees = await state.repo.git.getWorktrees();
 
 		if (state.flags == null) {
 			state.flags = [];
@@ -832,7 +841,9 @@ export class WorktreeGitCommand extends QuickCommand<State> {
 				context.title = getTitle(state.subcommand);
 
 				const result = yield* pickWorktreesStep(state, context, {
-					filter: wt => !wt.main || !wt.opened, // Can't delete the main or opened worktree
+					// Can't delete the main or opened worktree
+					excludeOpened: true,
+					filter: wt => !wt.isDefault,
 					includeStatus: true,
 					picked: state.uris?.map(uri => uri.toString()),
 					placeholder: 'Choose worktrees to delete',
@@ -852,21 +863,25 @@ export class WorktreeGitCommand extends QuickCommand<State> {
 
 			endSteps(state);
 
+			const branchesToDelete = [];
+
 			for (const uri of state.uris) {
 				let retry = false;
+				let skipHasChangesPrompt = false;
 				do {
 					retry = false;
 					const force = state.flags.includes('--force');
+					const deleteBranches = state.flags.includes('--delete-branches');
 
 					try {
+						const worktree = context.worktrees.find(wt => wt.uri.toString() === uri.toString());
 						if (force) {
-							const worktree = context.worktrees.find(wt => wt.uri.toString() === uri.toString());
 							let status;
 							try {
 								status = await worktree?.getStatus();
 							} catch {}
 
-							if (status?.hasChanges ?? false) {
+							if ((status?.hasChanges ?? false) && !skipHasChangesPrompt) {
 								const confirm: MessageItem = { title: 'Force Delete' };
 								const cancel: MessageItem = { title: 'Cancel', isCloseAffordance: true };
 								const result = await window.showWarningMessage(
@@ -880,8 +895,13 @@ export class WorktreeGitCommand extends QuickCommand<State> {
 							}
 						}
 
-						await state.repo.deleteWorktree(uri, { force: force });
+						await state.repo.git.deleteWorktree(uri, { force: force });
+						if (deleteBranches && worktree?.branch) {
+							branchesToDelete.push(getReferenceFromBranch(worktree?.branch));
+						}
 					} catch (ex) {
+						skipHasChangesPrompt = false;
+
 						if (WorktreeDeleteError.is(ex)) {
 							if (ex.reason === WorktreeDeleteErrorReason.MainWorkingTree) {
 								void window.showErrorMessage('Unable to delete the main worktree');
@@ -900,6 +920,7 @@ export class WorktreeGitCommand extends QuickCommand<State> {
 								if (result === confirm) {
 									state.flags.push('--force');
 									retry = true;
+									skipHasChangesPrompt = ex.reason === WorktreeDeleteErrorReason.HasChanges;
 								}
 							}
 						} else {
@@ -908,26 +929,70 @@ export class WorktreeGitCommand extends QuickCommand<State> {
 					}
 				} while (retry);
 			}
+
+			if (branchesToDelete.length) {
+				yield* getSteps(
+					this.container,
+					{
+						command: 'branch',
+						state: {
+							subcommand: 'delete',
+							repo: state.repo,
+							references: branchesToDelete,
+						},
+					},
+					this.pickedVia,
+				);
+			}
 		}
 	}
 
 	private *deleteCommandConfirmStep(state: DeleteStepState, context: Context): StepResultGenerator<DeleteFlags[]> {
+		context.title = state.uris.length === 1 ? 'Delete Worktree' : 'Delete Worktrees';
+
+		const label = state.uris.length === 1 ? 'Delete Worktree' : 'Delete Worktrees';
+		const branchesLabel = state.uris.length === 1 ? 'Branch' : 'Branches';
+		let selectedBranchesLabelSuffix = '';
+		if (state.startingFromBranchDelete) {
+			selectedBranchesLabelSuffix = ` for ${branchesLabel}`;
+			context.title = `${context.title}${selectedBranchesLabelSuffix}`;
+		}
+
+		const description =
+			state.uris.length === 1
+				? `delete worktree in $(folder) ${getWorkspaceFriendlyPath(state.uris[0])}`
+				: `delete ${state.uris.length} worktrees`;
+		const descriptionWithBranchDelete =
+			state.uris.length === 1
+				? 'delete the worktree and then prompt to delete the associated branch'
+				: `delete ${state.uris.length} worktrees and then prompt to delete the associated branches`;
+
 		const step: QuickPickStep<FlagsQuickPickItem<DeleteFlags>> = createConfirmStep(
 			appendReposToTitle(`Confirm ${context.title}`, state, context),
 			[
 				createFlagsQuickPickItem<DeleteFlags>(state.flags, [], {
-					label: context.title,
-					detail: `Will delete ${pluralize('worktree', state.uris.length, {
-						only: state.uris.length === 1,
-					})}${state.uris.length === 1 ? ` in $(folder) ${getWorkspaceFriendlyPath(state.uris[0])}` : ''}`,
+					label: `${label}${selectedBranchesLabelSuffix}`,
+					detail: `Will ${description}`,
 				}),
 				createFlagsQuickPickItem<DeleteFlags>(state.flags, ['--force'], {
-					label: `Force ${context.title}`,
-					description: 'including ANY UNCOMMITTED changes',
-					detail: `Will forcibly delete ${pluralize('worktree', state.uris.length, {
-						only: state.uris.length === 1,
-					})} ${state.uris.length === 1 ? ` in $(folder) ${getWorkspaceFriendlyPath(state.uris[0])}` : ''}`,
+					label: `Force ${label}${selectedBranchesLabelSuffix}`,
+					description: 'includes ANY UNCOMMITTED changes',
+					detail: `Will forcibly ${description}`,
 				}),
+				...(state.startingFromBranchDelete
+					? []
+					: [
+							createQuickPickSeparator<FlagsQuickPickItem<DeleteFlags>>(),
+							createFlagsQuickPickItem<DeleteFlags>(state.flags, ['--delete-branches'], {
+								label: `${label} & ${branchesLabel}`,
+								detail: `Will ${descriptionWithBranchDelete}`,
+							}),
+							createFlagsQuickPickItem<DeleteFlags>(state.flags, ['--force', '--delete-branches'], {
+								label: `Force ${label} & ${branchesLabel}`,
+								description: 'includes ANY UNCOMMITTED changes',
+								detail: `Will forcibly ${descriptionWithBranchDelete}`,
+							}),
+					  ]),
 			],
 			context,
 		);
@@ -947,7 +1012,7 @@ export class WorktreeGitCommand extends QuickCommand<State> {
 		while (this.canStepsContinue(state)) {
 			if (state.counter < 3 || state.worktree == null) {
 				context.title = getTitle(state.subcommand);
-				context.worktrees ??= await state.repo.getWorktrees();
+				context.worktrees ??= await state.repo.git.getWorktrees();
 
 				const result = yield* pickWorktreeStep(state, context, {
 					excludeOpened: true,
@@ -984,6 +1049,11 @@ export class WorktreeGitCommand extends QuickCommand<State> {
 					name = state.worktree.name;
 				}
 
+				const location = convertOpenFlagsToLocation(state.flags);
+				if (location === 'currentWindow' || location === 'newWindow') {
+					await state.onWorkspaceChanging?.();
+				}
+
 				openWorkspace(state.worktree.uri, { location: convertOpenFlagsToLocation(state.flags), name: name });
 			}
 		}
@@ -992,15 +1062,21 @@ export class WorktreeGitCommand extends QuickCommand<State> {
 	private *openCommandConfirmStep(state: OpenStepState, context: Context): StepResultGenerator<OpenFlags[]> {
 		type StepType = FlagsQuickPickItem<OpenFlags>;
 
+		const newWindowItem = createFlagsQuickPickItem<OpenFlags>(state.flags, ['--new-window'], {
+			label: `Open Worktree in a New Window`,
+			detail: 'Will open the worktree in a new window',
+		});
+
+		if (state.skipWorktreeConfirmations) {
+			return newWindowItem.item;
+		}
+
 		const confirmations: StepType[] = [
 			createFlagsQuickPickItem<OpenFlags>(state.flags, [], {
 				label: 'Open Worktree',
 				detail: 'Will open the worktree in the current window',
 			}),
-			createFlagsQuickPickItem<OpenFlags>(state.flags, ['--new-window'], {
-				label: `Open Worktree in a New Window`,
-				detail: 'Will open the worktree in a new window',
-			}),
+			newWindowItem,
 			createFlagsQuickPickItem<OpenFlags>(state.flags, ['--add-to-workspace'], {
 				label: `Add Worktree to Workspace`,
 				detail: 'Will add the worktree into the current workspace',
@@ -1038,7 +1114,7 @@ export class WorktreeGitCommand extends QuickCommand<State> {
 			context.title = state?.overrides?.title ?? getTitle(state.subcommand);
 
 			if (state.counter < 3 || state.worktree == null) {
-				context.worktrees ??= await state.repo.getWorktrees();
+				context.worktrees ??= await state.repo.git.getWorktrees();
 
 				let placeholder;
 				switch (state.changes.type) {

@@ -7,12 +7,14 @@ export const scope: IpcScope = 'home';
 export interface State extends WebviewState {
 	repositories: DidChangeRepositoriesParams;
 	webroot?: string;
-	promoStates: Record<string, boolean>;
 	subscription: Subscription;
 	orgSettings: {
 		drafts: boolean;
 	};
 	walkthroughCollapsed: boolean;
+	hasAnyIntegrationConnected: boolean;
+	avatar?: string;
+	organizationsCount?: number;
 }
 
 // COMMANDS
@@ -33,9 +35,18 @@ export interface DidChangeRepositoriesParams {
 }
 export const DidChangeRepositories = new IpcNotification<DidChangeRepositoriesParams>(scope, 'repositories/didChange');
 
+export interface DidChangeIntegrationsParams {
+	hasAnyIntegrationConnected: boolean;
+}
+export const DidChangeIntegrationsConnections = new IpcNotification<DidChangeIntegrationsParams>(
+	scope,
+	'integrations/didChange',
+);
+
 export interface DidChangeSubscriptionParams {
-	promoStates: Record<string, boolean>;
 	subscription: Subscription;
+	avatar: string;
+	organizationsCount: number;
 }
 export const DidChangeSubscription = new IpcNotification<DidChangeSubscriptionParams>(scope, 'subscription/didChange');
 
@@ -43,3 +54,5 @@ export interface DidChangeOrgSettingsParams {
 	orgSettings: State['orgSettings'];
 }
 export const DidChangeOrgSettings = new IpcNotification<DidChangeOrgSettingsParams>(scope, 'org/settings/didChange');
+
+export const DidFocusAccount = new IpcNotification<undefined>(scope, 'account/didFocus');

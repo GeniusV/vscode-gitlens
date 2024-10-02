@@ -1,10 +1,10 @@
 import { Disposable, window } from 'vscode';
 import type { Container } from '../../../container';
-import { setContext } from '../../../system/context';
 import { gate } from '../../../system/decorators/gate';
 import { once } from '../../../system/function';
 import { Logger } from '../../../system/logger';
 import { getLogScope } from '../../../system/logger.scope';
+import { setContext } from '../../../system/vscode/context';
 import type { ServerConnection } from '../serverConnection';
 import type {
 	FullOrganization,
@@ -79,7 +79,11 @@ export class OrganizationService implements Disposable {
 
 			if (!rsp.ok) {
 				debugger;
-				Logger.error('', scope, `Unable to get organizations; status=(${rsp.status}): ${rsp.statusText}`);
+				Logger.error(
+					undefined,
+					scope,
+					`Unable to get organizations; status=(${rsp.status}): ${rsp.statusText}`,
+				);
 
 				void window.showErrorMessage(`Unable to get organizations; Status: ${rsp.statusText}`, 'OK');
 
@@ -209,7 +213,11 @@ export class OrganizationService implements Disposable {
 		if (id == null) return undefined;
 
 		if (!this._organizationSettings?.has(id) || options?.force === true) {
-			const rsp = await this.connection.fetchApi(`v1/organizations/settings`, { method: 'GET' });
+			const rsp = await this.connection.fetchApi(
+				`v1/organizations/settings`,
+				{ method: 'GET' },
+				{ organizationId: id },
+			);
 			if (!rsp.ok) {
 				Logger.error(
 					'',

@@ -58,7 +58,7 @@
 				<div class="promo-banner" id="promo" hidden>
 					<a
 						href="https://gitkraken.com/hs23?utm_source=holiday_special&utm_medium=gitlens_banner&utm_campaign=holiday_special_2023"
-						aria-label="Holiday Special: 50% off GitLens Pro (plus entire the GitKraken DevEx platform) — only $4/month! Includes all Pro versions: GitLens, GitKraken Client, CLI, Browser Extension & more!"
+						aria-label="Holiday Special: 1st seat of Pro (plus the entire GitKraken DevEx platform) is now 50%+ off. Includes all Pro versions: GitLens, GitKraken Client, CLI, Browser Extension & more! See your special price."
 					>
 						<img
 							class="promo-banner__media is-dark"
@@ -626,7 +626,9 @@
 							><gl-tooltip hoist content="Show Commit Graph"><span>Commit Graph</span></gl-tooltip
 							><gl-feature-badge class="super small"></gl-feature-badge>
 						</a>
-						<a href="command:gitlens.showFocusPage" data-requires="repo" aria-label="Open Launchpad"
+						<a
+							href="command:gitlens.showLaunchpad?%7B%22source%22%3A%22welcome%22%7D"
+							aria-label="Open Launchpad"
 							><code-icon icon="rocket"></code-icon
 							><gl-tooltip hoist content="Open Launchpad"><span>Launchpad</span></gl-tooltip
 							><gl-feature-badge class="super small" preview></gl-feature-badge>

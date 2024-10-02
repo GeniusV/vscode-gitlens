@@ -1,8 +1,8 @@
 import type { CancellationToken, ConfigurationChangeEvent, Disposable } from 'vscode';
-import { ProgressLocation, ThemeColor, TreeItem, TreeItemCollapsibleState, window } from 'vscode';
+import { ProgressLocation, TreeItem, TreeItemCollapsibleState, window } from 'vscode';
 import type { ViewFilesLayout, WorktreesViewConfig } from '../config';
-import type { Colors } from '../constants';
-import { Commands, GlyphChars, proBadge } from '../constants';
+import { proBadge } from '../constants';
+import { Commands } from '../constants.commands';
 import type { Container } from '../container';
 import { PlusFeatures } from '../features';
 import { GitUri } from '../git/gitUri';
@@ -10,9 +10,9 @@ import type { RepositoryChangeEvent } from '../git/models/repository';
 import { groupRepositories, RepositoryChange, RepositoryChangeComparisonMode } from '../git/models/repository';
 import type { GitWorktree } from '../git/models/worktree';
 import { ensurePlusFeaturesEnabled } from '../plus/gk/utils';
-import { executeCommand } from '../system/command';
-import { configuration } from '../system/configuration';
 import { gate } from '../system/decorators/gate';
+import { executeCommand } from '../system/vscode/command';
+import { configuration } from '../system/vscode/configuration';
 import { RepositoriesSubscribeableNode } from './nodes/abstract/repositoriesSubscribeableNode';
 import { RepositoryFolderNode } from './nodes/abstract/repositoryFolderNode';
 import type { ViewNode } from './nodes/abstract/viewNode';
@@ -104,37 +104,6 @@ export class WorktreesView extends ViewBase<'worktrees', WorktreesViewNode, Work
 	constructor(container: Container) {
 		super(container, 'worktrees', 'Worktrees', 'worktreesView');
 
-		this.disposables.push(
-			window.registerFileDecorationProvider({
-				provideFileDecoration: (uri, _token) => {
-					if (uri.scheme !== 'gitlens-view' || uri.authority !== 'worktree') return undefined;
-
-					const [, status] = uri.path.split('/');
-					switch (status) {
-						case 'changes':
-							return {
-								badge: '●',
-								color: new ThemeColor(
-									'gitlens.decorations.worktreeHasUncommittedChangesForegroundColor' as Colors,
-								),
-								tooltip: 'Has Uncommitted Changes',
-							};
-
-						case 'missing':
-							return {
-								badge: GlyphChars.Warning,
-								color: new ThemeColor(
-									'gitlens.decorations.worktreeMissingForegroundColor' satisfies Colors,
-								),
-								tooltip: '',
-							};
-
-						default:
-							return undefined;
-					}
-				},
-			}),
-		);
 		this.description = proBadge;
 	}
 
@@ -285,7 +254,7 @@ export class WorktreesView extends ViewBase<'worktrees', WorktreesViewNode, Work
 				title: `Revealing worktree '${worktree.name}' in the side bar...`,
 				cancellable: true,
 			},
-			async (progress, token) => {
+			async (_progress, token) => {
 				const node = await this.findWorktree(worktree, token);
 				if (node == null) return undefined;
 

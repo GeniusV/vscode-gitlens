@@ -2,14 +2,16 @@ import { EntityIdentifierUtils } from '@gitkraken/provider-apis';
 import type { CancellationToken, ConfigurationChangeEvent, TextDocumentShowOptions } from 'vscode';
 import { CancellationTokenSource, Disposable, env, Uri, window } from 'vscode';
 import { extractDraftMessage } from '../../ai/aiProviderService';
-import type { MaybeEnrichedAutolink } from '../../annotations/autolinks';
-import { serializeAutolink } from '../../annotations/autolinks';
+import type { MaybeEnrichedAutolink } from '../../autolinks';
+import { serializeAutolink } from '../../autolinks';
 import { getAvatarUri } from '../../avatars';
 import type { CopyMessageToClipboardCommandArgs } from '../../commands/copyMessageToClipboard';
 import type { CopyShaToClipboardCommandArgs } from '../../commands/copyShaToClipboard';
 import type { OpenPullRequestOnRemoteCommandArgs } from '../../commands/openPullRequestOnRemote';
-import type { ContextKeys, Sources } from '../../constants';
-import { Commands } from '../../constants';
+import { Commands } from '../../constants.commands';
+import type { ContextKeys } from '../../constants.context';
+import { IssueIntegrationId } from '../../constants.integrations';
+import type { Sources } from '../../constants.telemetry';
 import type { Container } from '../../container';
 import type { CommitSelectedEvent } from '../../eventBus';
 import { executeGitCommand } from '../../git/actions';
@@ -42,14 +44,10 @@ import { showPatchesView } from '../../plus/drafts/actions';
 import type { Subscription } from '../../plus/gk/account/subscription';
 import type { SubscriptionChangeEvent } from '../../plus/gk/account/subscriptionService';
 import type { ConnectionStateChangeEvent } from '../../plus/integrations/integrationService';
-import { IssueIntegrationId } from '../../plus/integrations/providers/models';
 import { getEntityIdentifierInput } from '../../plus/integrations/providers/utils';
 import { confirmDraftStorage, ensureAccount } from '../../plus/utils';
 import type { ShowInCommitGraphCommandArgs } from '../../plus/webviews/graph/protocol';
 import type { Change } from '../../plus/webviews/patchDetails/protocol';
-import { executeCommand, executeCoreCommand, executeCoreGitCommand, registerCommand } from '../../system/command';
-import { configuration } from '../../system/configuration';
-import { getContext, onDidChangeContext } from '../../system/context';
 import { debug } from '../../system/decorators/log';
 import type { Deferrable } from '../../system/function';
 import { debounce } from '../../system/function';
@@ -58,8 +56,16 @@ import { Logger } from '../../system/logger';
 import { getLogScope } from '../../system/logger.scope';
 import { MRU } from '../../system/mru';
 import { getSettledValue, pauseOnCancelOrTimeoutMapTuplePromise } from '../../system/promise';
-import type { Serialized } from '../../system/serialize';
-import { serialize } from '../../system/serialize';
+import {
+	executeCommand,
+	executeCoreCommand,
+	executeCoreGitCommand,
+	registerCommand,
+} from '../../system/vscode/command';
+import { configuration } from '../../system/vscode/configuration';
+import { getContext, onDidChangeContext } from '../../system/vscode/context';
+import type { Serialized } from '../../system/vscode/serialize';
+import { serialize } from '../../system/vscode/serialize';
 import type { LinesChangeEvent } from '../../trackers/lineTracker';
 import type { IpcCallMessageType, IpcMessage } from '../protocol';
 import { updatePendingContext } from '../webviewController';
@@ -720,13 +726,13 @@ export class CommitDetailsWebviewProvider
 		};
 	}
 
-	private async openPullRequestChanges() {
+	private openPullRequestChanges() {
 		if (this.pullRequestContext == null) return;
 
 		const { repoPath, pr } = this.pullRequestContext;
 		if (pr.refs == null) return;
 
-		const refs = await getComparisonRefsForPullRequest(this.container, repoPath, pr.refs);
+		const refs = getComparisonRefsForPullRequest(repoPath, pr.refs);
 		return openComparisonChanges(
 			this.container,
 			{
@@ -738,13 +744,13 @@ export class CommitDetailsWebviewProvider
 		);
 	}
 
-	private async openPullRequestComparison() {
+	private openPullRequestComparison() {
 		if (this.pullRequestContext == null) return;
 
 		const { repoPath, pr } = this.pullRequestContext;
 		if (pr.refs == null) return;
 
-		const refs = await getComparisonRefsForPullRequest(this.container, repoPath, pr.refs);
+		const refs = getComparisonRefsForPullRequest(repoPath, pr.refs);
 		return this.container.searchAndCompareView.compare(refs.repoPath, refs.head, refs.base);
 	}
 
@@ -754,7 +760,7 @@ export class CommitDetailsWebviewProvider
 		const {
 			pr: { url },
 		} = this.pullRequestContext;
-		return executeCommand<OpenPullRequestOnRemoteCommandArgs>(Commands.OpenPullRequestOnRemote, {
+		return executeCommand<OpenPullRequestOnRemoteCommandArgs, void>(Commands.OpenPullRequestOnRemote, {
 			pr: { url: url },
 			clipboard: clipboard,
 		});
@@ -1080,9 +1086,11 @@ export class CommitDetailsWebviewProvider
 		try {
 			const summary = await (
 				await this.container.ai
-			)?.explainCommit(this._context.commit!, {
-				progress: { location: { viewId: this.host.id } },
-			});
+			)?.explainCommit(
+				this._context.commit!,
+				{ source: 'inspect', type: isStash(this._context.commit) ? 'stash' : 'commit' },
+				{ progress: { location: { viewId: this.host.id } } },
+			);
 			if (summary == null) throw new Error('Error retrieving content');
 
 			params = { summary: summary };
@@ -1114,9 +1122,11 @@ export class CommitDetailsWebviewProvider
 
 			const summary = await (
 				await this.container.ai
-			)?.generateDraftMessage(repo, {
-				progress: { location: { viewId: this.host.id } },
-			});
+			)?.generateDraftMessage(
+				repo,
+				{ source: 'inspect', type: 'suggested_pr_change' },
+				{ progress: { location: { viewId: this.host.id } } },
+			);
 			if (summary == null) throw new Error('Error retrieving content');
 
 			params = extractDraftMessage(summary);
@@ -1273,7 +1283,7 @@ export class CommitDetailsWebviewProvider
 		repository: Repository,
 		branchName: string,
 	): Promise<{ branch: GitBranch; pullRequest: PullRequest | undefined; codeSuggestions: Draft[] } | undefined> {
-		const branch = await repository.getBranch(branchName);
+		const branch = await repository.git.getBranch(branchName);
 		if (branch == null) return undefined;
 
 		if (this.mode === 'commit') {
@@ -1505,7 +1515,7 @@ export class CommitDetailsWebviewProvider
 	}
 
 	private async getWipChange(repository: Repository): Promise<WipChange | undefined> {
-		const status = await this.container.git.getStatusForRepo(repository.path);
+		const status = await this.container.git.getStatus(repository.path);
 		if (status == null) return undefined;
 
 		const files: GitFileChangeShape[] = [];
@@ -1685,7 +1695,7 @@ export class CommitDetailsWebviewProvider
 					state: await this.getState(context),
 				});
 			} catch (ex) {
-				Logger.error(scope, ex);
+				Logger.error(ex, scope);
 				debugger;
 			}
 		});

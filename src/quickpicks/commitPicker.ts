@@ -5,16 +5,16 @@ import { Container } from '../container';
 import type { GitCommit, GitStashCommit } from '../git/models/commit';
 import type { GitLog } from '../git/models/log';
 import type { GitStash } from '../git/models/stash';
-import { configuration } from '../system/configuration';
 import { filter, map } from '../system/iterable';
-import type { KeyboardScope } from '../system/keyboard';
 import { isPromise } from '../system/promise';
-import { getQuickPickIgnoreFocusOut } from '../system/utils';
+import { configuration } from '../system/vscode/configuration';
+import type { KeyboardScope } from '../system/vscode/keyboard';
+import { getQuickPickIgnoreFocusOut } from '../system/vscode/utils';
 import { CommandQuickPickItem } from './items/common';
 import type { DirectiveQuickPickItem } from './items/directive';
 import { createDirectiveQuickPickItem, Directive, isDirectiveQuickPickItem } from './items/directive';
-import type { CommitQuickPickItem } from './items/gitCommands';
-import { createCommitQuickPickItem, createStashQuickPickItem } from './items/gitCommands';
+import type { CommitQuickPickItem } from './items/gitWizard';
+import { createCommitQuickPickItem, createStashQuickPickItem } from './items/gitWizard';
 
 type Item = CommandQuickPickItem | CommitQuickPickItem | DirectiveQuickPickItem;
 

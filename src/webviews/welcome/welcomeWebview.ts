@@ -1,12 +1,13 @@
 import type { ConfigurationChangeEvent } from 'vscode';
 import { Disposable, workspace } from 'vscode';
-import type { ContextKeys } from '../../constants';
+import type { ContextKeys } from '../../constants.context';
+import { SubscriptionState } from '../../constants.subscription';
 import type { Container } from '../../container';
 import type { Subscription } from '../../plus/gk/account/subscription';
-import { isSubscriptionPaid, SubscriptionState } from '../../plus/gk/account/subscription';
+import { isSubscriptionPaid } from '../../plus/gk/account/subscription';
 import type { SubscriptionChangeEvent } from '../../plus/gk/account/subscriptionService';
-import { configuration } from '../../system/configuration';
-import { getContext, onDidChangeContext } from '../../system/context';
+import { configuration } from '../../system/vscode/configuration';
+import { getContext, onDidChangeContext } from '../../system/vscode/context';
 import type { IpcMessage } from '../protocol';
 import type { WebviewHost, WebviewProvider } from '../webviewProvider';
 import type { State, UpdateConfigurationParams } from './protocol';
@@ -101,7 +102,7 @@ export class WelcomeWebviewProvider implements WebviewProvider<State> {
 	private async getTrialOrPaidState(subscription?: Subscription): Promise<boolean> {
 		const sub = subscription ?? (await this.container.subscription.getSubscription(true));
 
-		if ([SubscriptionState.FreePlusInTrial, SubscriptionState.Paid].includes(sub.state)) {
+		if ([SubscriptionState.ProTrial, SubscriptionState.Paid].includes(sub.state)) {
 			return true;
 		}
 

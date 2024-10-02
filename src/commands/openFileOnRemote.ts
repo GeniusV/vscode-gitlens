@@ -1,6 +1,7 @@
 import type { TextEditor, Uri } from 'vscode';
 import { Range } from 'vscode';
-import { Commands, GlyphChars } from '../constants';
+import { GlyphChars } from '../constants';
+import { Commands } from '../constants.commands';
 import type { Container } from '../container';
 import { GitUri } from '../git/gitUri';
 import { getBranchNameWithoutRemote, getRemoteNameFromBranchName } from '../git/models/branch';
@@ -8,10 +9,10 @@ import { isSha } from '../git/models/reference';
 import { RemoteResourceType } from '../git/models/remoteResource';
 import { showGenericErrorMessage } from '../messages';
 import { showReferencePicker } from '../quickpicks/referencePicker';
-import { command, executeCommand } from '../system/command';
 import { UriComparer } from '../system/comparers';
 import { Logger } from '../system/logger';
 import { pad, splitSingle } from '../system/string';
+import { command, executeCommand } from '../system/vscode/command';
 import { StatusFileNode } from '../views/nodes/statusFileNode';
 import type { CommandContext } from './base';
 import {

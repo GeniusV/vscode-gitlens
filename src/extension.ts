@@ -1,13 +1,15 @@
-import type { ExtensionContext } from 'vscode';
-import { version as codeVersion, env, ExtensionMode, Uri, window, workspace } from 'vscode';
 import { hrtime } from '@env/hrtime';
 import { isWeb } from '@env/platform';
+import type { ExtensionContext } from 'vscode';
+import { version as codeVersion, env, ExtensionMode, Uri, window, workspace } from 'vscode';
 import { Api } from './api/api';
 import type { CreatePullRequestActionContext, GitLensApi, OpenPullRequestActionContext } from './api/gitlens';
 import type { CreatePullRequestOnRemoteCommandArgs } from './commands/createPullRequestOnRemote';
 import type { OpenPullRequestOnRemoteCommandArgs } from './commands/openPullRequestOnRemote';
 import { fromOutputLevel } from './config';
-import { Commands, SyncedStorageKeys } from './constants';
+import { trackableSchemes } from './constants';
+import { Commands } from './constants.commands';
+import { SyncedStorageKeys } from './constants.storage';
 import { Container } from './container';
 import { isGitUri } from './git/gitUri';
 import { getBranchNameWithoutRemote, isBranch } from './git/models/branch';
@@ -16,16 +18,17 @@ import { isRepository } from './git/models/repository';
 import { isTag } from './git/models/tag';
 import { showDebugLoggingWarningMessage, showPreReleaseExpiredErrorMessage, showWhatsNewMessage } from './messages';
 import { registerPartnerActionRunners } from './partners';
-import { executeCommand, registerCommands } from './system/command';
-import { configuration, Configuration } from './system/configuration';
-import { setContext } from './system/context';
 import { setDefaultDateLocales } from './system/date';
 import { once } from './system/event';
 import { BufferedLogChannel, getLoggableName, Logger } from './system/logger';
 import { flatten } from './system/object';
 import { Stopwatch } from './system/stopwatch';
-import { Storage } from './system/storage';
 import { compare, fromString, satisfies } from './system/version';
+import { executeCommand, registerCommands } from './system/vscode/command';
+import { configuration, Configuration } from './system/vscode/configuration';
+import { setContext } from './system/vscode/context';
+import { Storage } from './system/vscode/storage';
+import { isTextDocument, isTextEditor, isWorkspaceFolder } from './system/vscode/utils';
 import { isViewNode } from './views/nodes/abstract/viewNode';
 import './commands';
 
@@ -69,13 +72,25 @@ export async function activate(context: ExtensionContext): Promise<GitLensApi | 
 				if (isRepository(o) || isBranch(o) || isCommit(o) || isTag(o) || isViewNode(o)) return o.toString();
 
 				if ('rootUri' in o && o.rootUri instanceof Uri) {
-					return `ScmRepository(rootUri=${o.rootUri.toString(true)})`;
+					return `ScmRepository(${o.rootUri.toString(true)})`;
 				}
 
 				if ('uri' in o && o.uri instanceof Uri) {
-					return `${
-						'name' in o && 'index' in o ? 'WorkspaceFolder' : getLoggableName(o)
-					}(uri=${o.uri.toString(true)})`;
+					if (isWorkspaceFolder(o)) {
+						return `WorkspaceFolder(${o.name}, index=${o.index}, ${o.uri.toString(true)})`;
+					}
+
+					if (isTextDocument(o)) {
+						return `TextDocument(${o.languageId}, dirty=${o.isDirty}, ${o.uri.toString(true)})`;
+					}
+
+					return `${getLoggableName(o)}(${o.uri.toString(true)})`;
+				}
+
+				if (isTextEditor(o)) {
+					return `TextEditor(${o.viewColumn}, ${o.document.uri.toString(true)} ${o.selections
+						?.map(s => `[${s.anchor.line}:${s.anchor.character}-${s.active.line}:${s.active.character}]`)
+						.join(',')})`;
 				}
 
 				return undefined;
@@ -201,6 +216,9 @@ export async function activate(context: ExtensionContext): Promise<GitLensApi | 
 		// Set context to only show some commands when using the pre-release version
 		void setContext('gitlens:prerelease', true);
 	}
+	// NOTE: We might have to add more schemes to this list, because the schemes that are used in the `resource*` context keys don't match was URI scheme is returned in the APIs
+	// For example, using the remote extensions the `resourceScheme` is `vscode-remote`, but the URI scheme is `file`
+	void setContext('gitlens:schemes:trackable', [...trackableSchemes]);
 
 	// Signal that the container is now ready
 	await container.ready();

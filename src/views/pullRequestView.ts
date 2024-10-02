@@ -1,15 +1,15 @@
 import type { ConfigurationChangeEvent, Disposable } from 'vscode';
 import { TreeItem, TreeItemCollapsibleState } from 'vscode';
 import type { PullRequestViewConfig, ViewFilesLayout } from '../config';
-import { Commands } from '../constants';
+import { Commands } from '../constants.commands';
 import type { Container } from '../container';
 import { unknownGitUri } from '../git/gitUri';
 import type { GitBranch } from '../git/models/branch';
 import type { GitCommit } from '../git/models/commit';
 import type { PullRequest } from '../git/models/pullRequest';
-import { executeCommand } from '../system/command';
-import { configuration } from '../system/configuration';
-import { setContext } from '../system/context';
+import { executeCommand } from '../system/vscode/command';
+import { configuration } from '../system/vscode/configuration';
+import { setContext } from '../system/vscode/context';
 import { ViewNode } from './nodes/abstract/viewNode';
 import { PullRequestNode } from './nodes/pullRequestNode';
 import { ViewBase } from './viewBase';
@@ -131,8 +131,7 @@ export class PullRequestView extends ViewBase<'pullRequest', PullRequestViewNode
 			!configuration.changed(e, 'defaultDateSource') &&
 			!configuration.changed(e, 'defaultDateStyle') &&
 			!configuration.changed(e, 'defaultGravatarsStyle') &&
-			!configuration.changed(e, 'defaultTimeFormat') &&
-			!configuration.changed(e, 'plusFeatures.enabled')
+			!configuration.changed(e, 'defaultTimeFormat')
 		) {
 			return false;
 		}

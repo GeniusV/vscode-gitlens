@@ -1,5 +1,5 @@
 import { Uri } from 'vscode';
-import type { EnrichedAutolink } from '../../annotations/autolinks';
+import type { EnrichedAutolink } from '../../autolinks';
 import { getAvatarUri, getCachedAvatarUri } from '../../avatars';
 import type { GravatarDefaultStyle } from '../../config';
 import { GlyphChars } from '../../constants';
@@ -209,7 +209,7 @@ export class GitCommit implements GitRevisionReference {
 			this._etagFileSystem = repository?.etagFileSystem;
 
 			if (this._etagFileSystem != null) {
-				const status = await this.container.git.getStatusForRepo(this.repoPath);
+				const status = await this.container.git.getStatus(this.repoPath);
 				if (status != null) {
 					this._files = status.files.flatMap(f => f.getPseudoFileChanges());
 				}
@@ -219,6 +219,8 @@ export class GitCommit implements GitRevisionReference {
 			if (this._files == null) {
 				this._files = this.file != null ? [this.file] : [];
 			}
+
+			this._recomputeStats = true;
 
 			return;
 		}
@@ -561,6 +563,7 @@ export class GitCommit implements GitRevisionReference {
 		parents?: string[];
 		files?: { file?: GitFileChange | null; files?: GitFileChange[] | null } | null;
 		lines?: GitCommitLine[];
+		stats?: GitCommitStats;
 	}): GitCommit {
 		let files;
 		if (changes.files != null) {
@@ -591,7 +594,7 @@ export class GitCommit implements GitRevisionReference {
 			this.getChangedValue(changes.parents, this.parents) ?? [],
 			this.message,
 			files,
-			this.stats,
+			this.getChangedValue(changes.stats, this.stats),
 			this.getChangedValue(changes.lines, this.lines),
 			this.tips,
 			this.stashName,

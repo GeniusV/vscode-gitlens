@@ -1,12 +1,12 @@
 import type { TextEditor, Uri } from 'vscode';
 import { ProgressLocation, window } from 'vscode';
-import { Commands } from '../constants';
+import { Commands } from '../constants.commands';
 import type { Container } from '../container';
 import { GitUri } from '../git/gitUri';
 import { showGenericErrorMessage } from '../messages';
 import { getBestRepositoryOrShowPicker } from '../quickpicks/repositoryPicker';
-import { command, executeCoreCommand } from '../system/command';
 import { Logger } from '../system/logger';
+import { command, executeCoreCommand } from '../system/vscode/command';
 import { ActiveEditorCommand, getCommandUri } from './base';
 
 export interface GenerateCommitMessageCommandArgs {
@@ -41,10 +41,14 @@ export class GenerateCommitMessageCommand extends ActiveEditorCommand {
 			const currentMessage = scmRepo.inputBox.value;
 			const message = await (
 				await this.container.ai
-			)?.generateCommitMessage(repository, {
-				context: currentMessage,
-				progress: { location: ProgressLocation.Notification, title: 'Generating commit message...' },
-			});
+			)?.generateCommitMessage(
+				repository,
+				{ source: 'commandPalette' },
+				{
+					context: currentMessage,
+					progress: { location: ProgressLocation.Notification, title: 'Generating commit message...' },
+				},
+			);
 			if (message == null) return;
 
 			void executeCoreCommand('workbench.view.scm');

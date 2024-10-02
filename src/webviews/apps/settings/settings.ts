@@ -1,8 +1,8 @@
 /*global document IntersectionObserver*/
 import './settings.scss';
-import type { ManageCloudIntegrationsCommandArgs } from '../../../commands/cloudIntegrations';
-import type { AutolinkReference } from '../../../config';
-import type { IssueIntegrationId } from '../../../plus/integrations/providers/models';
+import type { ConnectCloudIntegrationsCommandArgs } from '../../../commands/cloudIntegrations';
+import type { AutolinkConfig } from '../../../config';
+import type { IssueIntegrationId, SupportedCloudIntegrationIds } from '../../../constants.integrations';
 import type { IpcMessage, UpdateConfigurationParams } from '../../protocol';
 import { DidChangeConfigurationNotification, UpdateConfigurationCommand } from '../../protocol';
 import type { State } from '../../settings/protocol';
@@ -89,28 +89,28 @@ export class SettingsApp extends App<State> {
 		const disposables = super.onBind?.() ?? [];
 
 		disposables.push(
-			DOM.on('input[type=checkbox][data-setting]', 'change', (e, target: HTMLInputElement) =>
+			DOM.on('input[type=checkbox][data-setting]', 'change', (_e, target: HTMLInputElement) =>
 				this.onInputChecked(target),
 			),
 			DOM.on(
 				'input[type=text][data-setting], input[type=number][data-setting], input:not([type])[data-setting]',
 				'blur',
-				(e, target: HTMLInputElement) => this.onInputBlurred(target),
+				(_e, target: HTMLInputElement) => this.onInputBlurred(target),
 			),
 			DOM.on(
 				'input[type=text][data-setting], input[type=number][data-setting], input:not([type])[data-setting]',
 				'focus',
-				(e, target: HTMLInputElement) => this.onInputFocused(target),
+				(_e, target: HTMLInputElement) => this.onInputFocused(target),
 			),
 			DOM.on(
 				'input[type=text][data-setting][data-setting-preview], input[type=number][data-setting][data-setting-preview]',
 				'input',
-				(e, target: HTMLInputElement) => this.onInputChanged(target),
+				(_e, target: HTMLInputElement) => this.onInputChanged(target),
 			),
-			DOM.on('button[data-setting-clear]', 'click', (e, target: HTMLButtonElement) =>
+			DOM.on('button[data-setting-clear]', 'click', (_e, target: HTMLButtonElement) =>
 				this.onButtonClicked(target),
 			),
-			DOM.on('select[data-setting]', 'change', (e, target: HTMLSelectElement) => this.onInputSelected(target)),
+			DOM.on('select[data-setting]', 'change', (_e, target: HTMLSelectElement) => this.onInputSelected(target)),
 			DOM.on('.token[data-token]', 'mousedown', (e, target: HTMLElement) => this.onTokenMouseDown(target, e)),
 			DOM.on('.section--collapsible>.section__header', 'click', (e, target: HTMLInputElement) =>
 				this.onSectionHeaderClicked(target, e),
@@ -391,7 +391,7 @@ export class SettingsApp extends App<State> {
 		const token = `\${${element.dataset.token}}`;
 		let selectionStart = input.selectionStart;
 		if (selectionStart != null) {
-			input.value = `${input.value.substring(0, selectionStart)}${token}${input.value.substr(
+			input.value = `${input.value.substring(0, selectionStart)}${token}${input.value.substring(
 				input.selectionEnd ?? selectionStart,
 			)}`;
 
@@ -773,7 +773,7 @@ export class SettingsApp extends App<State> {
 		const href = element.getAttribute('href');
 		if (href == null) return;
 
-		const anchor = href.substr(1);
+		const anchor = href.substring(1);
 		this.scrollToAnchor(anchor, 'smooth');
 
 		e.stopPropagation();
@@ -804,15 +804,15 @@ export class SettingsApp extends App<State> {
 		if ($root == null) return;
 
 		const { hasAccount, hasConnectedJira } = this.state;
-		let message = `<a href="command:gitlens.plus.cloudIntegrations.manage?${encodeURIComponent(
+		let message = `<a href="command:gitlens.plus.cloudIntegrations.connect?${encodeURIComponent(
 			JSON.stringify({
-				integrationId: 'jira' as IssueIntegrationId.Jira,
+				integrationIds: ['jira' as IssueIntegrationId.Jira] as SupportedCloudIntegrationIds[],
 				source: 'settings',
 				detail: {
 					action: 'connect',
 					integration: 'jira',
 				},
-			} satisfies ManageCloudIntegrationsCommandArgs),
+			} satisfies ConnectCloudIntegrationsCommandArgs),
 		)}">Connect to Jira Cloud</a> &mdash; ${
 			hasAccount ? '' : 'sign up and '
 		}get access to automatic rich Jira autolinks.`;
@@ -836,7 +836,7 @@ export class SettingsApp extends App<State> {
 			</div>
 		`;
 
-		const autolinkTemplate = (index: number, autolink?: AutolinkReference, isNew = false, renderHelp = true) => `
+		const autolinkTemplate = (index: number, autolink?: AutolinkConfig, isNew = false, renderHelp = true) => `
 			<div class="setting${isNew ? ' hidden" data-region="autolink' : ''}">
 				<div class="setting__group">
 					<div class="setting__input setting__input--short setting__input--with-actions">

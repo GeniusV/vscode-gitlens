@@ -48,6 +48,7 @@ export class GlButton extends LitElement {
 			}
 
 			.control {
+				box-sizing: border-box;
 				display: inline-flex;
 				flex-direction: row;
 				justify-content: center;
@@ -159,8 +160,8 @@ export class GlButton extends LitElement {
 	@query('.control')
 	protected control!: HTMLElement;
 
-	@property()
-	appearance?: string;
+	@property({ reflect: true })
+	appearance?: 'alert' | 'secondary' | 'toolbar';
 
 	@property({ type: Boolean, reflect: true })
 	disabled = false;

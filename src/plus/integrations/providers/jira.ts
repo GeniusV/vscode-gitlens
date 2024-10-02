@@ -1,13 +1,13 @@
 import type { AuthenticationSession, CancellationToken } from 'vscode';
-import type { DynamicAutolinkReference } from '../../../annotations/autolinks';
-import type { AutolinkReference } from '../../../config';
+import type { AutolinkReference, DynamicAutolinkReference } from '../../../autolinks';
+import { IssueIntegrationId } from '../../../constants.integrations';
 import type { Account } from '../../../git/models/author';
 import type { IssueOrPullRequest, SearchedIssue } from '../../../git/models/issue';
 import { filterMap, flatten } from '../../../system/iterable';
 import type { IntegrationAuthenticationProviderDescriptor } from '../authentication/integrationAuthentication';
 import type { ResourceDescriptor } from '../integration';
 import { IssueIntegration } from '../integration';
-import { IssueFilter, IssueIntegrationId, providersMetadata, toAccount, toSearchedIssue } from './models';
+import { IssueFilter, providersMetadata, toAccount, toSearchedIssue } from './models';
 
 const metadata = providersMetadata[IssueIntegrationId.Jira];
 const authProvider = Object.freeze({ id: metadata.id, scopes: metadata.scopes });
@@ -61,10 +61,13 @@ export class JiraIntegration extends IssueIntegration<IssueIntegrationId.Jira> {
 					for (const project of projects) {
 						const prefix = `${project.key}-`;
 						autolinks.push({
-							type: 'issue',
-							url: `${organization.url}/browse/${prefix}<num>`,
 							prefix: prefix,
+							url: `${organization.url}/browse/${prefix}<num>`,
+							alphanumeric: false,
+							ignoreCase: false,
 							title: `Open Issue ${prefix}<num> on ${organization.name}`,
+
+							type: 'issue',
 							description: `${organization.name} Issue ${prefix}<num>`,
 							descriptor: { ...organization },
 						});

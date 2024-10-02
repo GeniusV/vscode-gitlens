@@ -1,7 +1,8 @@
 import type { CancellationToken, ConfigurationChangeEvent } from 'vscode';
 import { Disposable, ProgressLocation, ThemeIcon, TreeItem, TreeItemCollapsibleState, window } from 'vscode';
 import type { CommitsViewConfig, ViewFilesLayout } from '../config';
-import { Commands, GlyphChars } from '../constants';
+import { GlyphChars } from '../constants';
+import { Commands } from '../constants.commands';
 import type { Container } from '../container';
 import { GitUri } from '../git/gitUri';
 import type { GitCommit } from '../git/models/commit';
@@ -14,12 +15,12 @@ import { Repository, RepositoryChange, RepositoryChangeComparisonMode } from '..
 import type { GitUser } from '../git/models/user';
 import { showContributorsPicker } from '../quickpicks/contributorsPicker';
 import { getRepositoryOrShowPicker } from '../quickpicks/repositoryPicker';
-import { createCommand, executeCommand } from '../system/command';
-import { configuration } from '../system/configuration';
-import { setContext } from '../system/context';
 import { gate } from '../system/decorators/gate';
 import { debug } from '../system/decorators/log';
 import { disposableInterval } from '../system/function';
+import { createCommand, executeCommand } from '../system/vscode/command';
+import { configuration } from '../system/vscode/configuration';
+import { setContext } from '../system/vscode/context';
 import type { UsageChangeEvent } from '../telemetry/usageTracker';
 import { RepositoriesSubscribeableNode } from './nodes/abstract/repositoriesSubscribeableNode';
 import { RepositoryFolderNode } from './nodes/abstract/repositoryFolderNode';
@@ -33,7 +34,7 @@ import { registerViewCommand } from './viewCommands';
 export class CommitsRepositoryNode extends RepositoryFolderNode<CommitsView, BranchNode> {
 	async getChildren(): Promise<ViewNode[]> {
 		if (this.child == null) {
-			const branch = await this.repo.getBranch();
+			const branch = await this.repo.git.getBranch();
 			if (branch == null) {
 				this.view.message = 'No commits could be found.';
 
@@ -54,7 +55,7 @@ export class CommitsRepositoryNode extends RepositoryFolderNode<CommitsView, Bra
 					expand: true,
 					limitCommits: !this.splatted,
 					showComparison: this.view.config.showBranchComparison,
-					showCurrentOrOpened: false,
+					showStatusDecorationOnly: true,
 					showMergeCommits: !this.view.state.hideMergeCommits,
 					showTracking: true,
 					authors: authors,
@@ -158,7 +159,7 @@ export class CommitsViewNode extends RepositoriesSubscribeableNode<CommitsView, 
 		if (this.children.length === 1) {
 			const [child] = this.children;
 
-			const branch = await child.repo.getBranch();
+			const branch = await child.repo.git.getBranch();
 			if (branch != null) {
 				const lastFetched = (await child.repo.getLastFetched()) ?? 0;
 
@@ -381,7 +382,7 @@ export class CommitsView extends ViewBase<'commits', CommitsViewNode, CommitsVie
 				})} in the side bar...`,
 				cancellable: true,
 			},
-			async (progress, token) => {
+			async (_progress, token) => {
 				const node = await this.findCommit(commit, token);
 				if (node == null) return undefined;
 

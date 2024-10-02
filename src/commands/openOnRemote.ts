@@ -1,4 +1,5 @@
-import { Commands, GlyphChars } from '../constants';
+import { GlyphChars } from '../constants';
+import { Commands } from '../constants.commands';
 import type { Container } from '../container';
 import { createRevisionRange, shortenRevision } from '../git/models/reference';
 import type { GitRemote } from '../git/models/remote';
@@ -8,10 +9,10 @@ import { RemoteResourceType } from '../git/models/remoteResource';
 import type { RemoteProvider } from '../git/remotes/remoteProvider';
 import { showGenericErrorMessage } from '../messages';
 import { showRemoteProviderPicker } from '../quickpicks/remoteProviderPicker';
-import { ensure } from '../system/array';
-import { command } from '../system/command';
+import { ensureArray } from '../system/array';
 import { Logger } from '../system/logger';
 import { pad, splitSingle } from '../system/string';
+import { command } from '../system/vscode/command';
 import { Command } from './base';
 
 export type OpenOnRemoteCommandArgs =
@@ -87,7 +88,7 @@ export class OpenOnRemoteCommand extends Command {
 		}
 
 		try {
-			const resources = ensure(args.resource)!;
+			const resources = ensureArray(args.resource);
 			for (const resource of resources) {
 				await processResource.call(this, resource);
 			}

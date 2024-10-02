@@ -1,6 +1,7 @@
 import type { ConfigurationChangeEvent, ViewColumn } from 'vscode';
 import { ConfigurationTarget, Disposable, workspace } from 'vscode';
 import { extensionPrefix } from '../../constants';
+import { IssueIntegrationId } from '../../constants.integrations';
 import type { Container } from '../../container';
 import { CommitFormatter } from '../../git/formatters/commitFormatter';
 import { GitCommit, GitCommitIdentity } from '../../git/models/commit';
@@ -8,10 +9,9 @@ import { GitFileChange, GitFileIndexStatus } from '../../git/models/file';
 import { PullRequest } from '../../git/models/pullRequest';
 import type { SubscriptionChangeEvent } from '../../plus/gk/account/subscriptionService';
 import type { ConnectionStateChangeEvent } from '../../plus/integrations/integrationService';
-import { IssueIntegrationId } from '../../plus/integrations/providers/models';
-import type { ConfigPath, CoreConfigPath } from '../../system/configuration';
-import { configuration } from '../../system/configuration';
 import { map } from '../../system/iterable';
+import type { ConfigPath, CoreConfigPath } from '../../system/vscode/configuration';
+import { configuration } from '../../system/vscode/configuration';
 import type { CustomConfigPath, IpcMessage } from '../protocol';
 import {
 	assertsConfigKeyValue,
@@ -219,6 +219,7 @@ export class SettingsWebviewProvider implements WebviewProvider<State, State, Se
 							pr = new PullRequest(
 								{ id: 'github', name: 'GitHub', domain: 'github.com', icon: 'github' },
 								{
+									id: 'eamodio',
 									name: 'Eric Amodio',
 									avatarUrl: 'https://avatars1.githubusercontent.com/u/641685?s=32&v=4',
 									url: 'https://github.com/eamodio',

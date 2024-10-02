@@ -1,8 +1,9 @@
+import type { HeadersInit } from '@env/fetch';
 import type { EntityIdentifier } from '@gitkraken/provider-apis';
 import { EntityIdentifierUtils } from '@gitkraken/provider-apis';
 import type { Disposable } from 'vscode';
-import type { HeadersInit } from '@env/fetch';
 import { getAvatarUri } from '../../avatars';
+import type { IntegrationId } from '../../constants.integrations';
 import type { Container } from '../../container';
 import type { GitCommit } from '../../git/models/commit';
 import type { PullRequest } from '../../git/models/pullRequest';
@@ -43,13 +44,12 @@ import { Logger } from '../../system/logger';
 import type { LogScope } from '../../system/logger.scope';
 import { getLogScope } from '../../system/logger.scope';
 import { getSettledValue } from '../../system/promise';
-import type { FocusItem } from '../focus/focusProvider';
 import type { OrganizationMember } from '../gk/account/organization';
 import type { SubscriptionAccount } from '../gk/account/subscription';
 import type { ServerConnection } from '../gk/serverConnection';
-import type { IntegrationId } from '../integrations/providers/models';
 import { providersMetadata } from '../integrations/providers/models';
 import { getEntityIdentifierInput } from '../integrations/providers/utils';
+import type { LaunchpadItem } from '../launchpad/launchpadProvider';
 
 export interface ProviderAuth {
 	provider: IntegrationId;
@@ -113,7 +113,7 @@ export class DraftService implements Disposable {
 				};
 
 				const repo = patchRequests[0].repository;
-				const providerAuth = await this.getProviderAuthFromRepository(repo);
+				const providerAuth = await this.getProviderAuthFromRepoOrIntegrationId(repo);
 				if (providerAuth == null) {
 					throw new Error('No provider integration found');
 				}
@@ -285,17 +285,7 @@ export class DraftService implements Disposable {
 					domain: remote.domain,
 					path: remote.path,
 				},
-				provider:
-					remote.provider.gkProviderId != null &&
-					remote.provider.owner != null &&
-					remote.provider.repoName != null
-						? {
-								id: remote.provider.gkProviderId,
-								repoDomain: remote.provider.owner,
-								repoName: remote.provider.repoName,
-								// repoOwnerDomain: ??
-						  }
-						: undefined,
+				provider: remote.provider.providerDesc,
 			};
 		}
 
@@ -759,36 +749,28 @@ export class DraftService implements Disposable {
 		};
 	}
 
-	async getProviderAuthFromRepository(repository: Repository): Promise<ProviderAuth | undefined> {
-		const remoteProvider = await repository.getBestRemoteWithIntegration();
-		if (remoteProvider == null) return undefined;
+	async getProviderAuthFromRepoOrIntegrationId(
+		repoOrIntegrationId: Repository | IntegrationId,
+	): Promise<ProviderAuth | undefined> {
+		let integration;
+		if (isRepository(repoOrIntegrationId)) {
+			const remoteProvider = await repoOrIntegrationId.git.getBestRemoteWithIntegration();
+			if (remoteProvider == null) return undefined;
 
-		const integration = await remoteProvider.getIntegration();
+			integration = await remoteProvider.getIntegration();
+		} else {
+			const metadata = providersMetadata[repoOrIntegrationId];
+			if (metadata == null) return undefined;
+
+			integration = await this.container.integrations.get(repoOrIntegrationId, metadata.domain);
+		}
 		if (integration == null) return undefined;
 
-		const session = await this.container.integrationAuthentication.getSession(
-			integration.id,
-			integration.authProviderDescriptor,
-		);
+		const session = await integration.getSession('code-suggest');
 		if (session == null) return undefined;
 
 		return {
 			provider: integration.authProvider.id,
-			token: session.accessToken,
-		};
-	}
-
-	async getProviderAuthForIntegration(integrationId: IntegrationId): Promise<ProviderAuth | undefined> {
-		const metadata = providersMetadata[integrationId];
-		if (metadata == null) return undefined;
-		const session = await this.container.integrationAuthentication.getSession(integrationId, {
-			domain: metadata.domain,
-			scopes: metadata.scopes,
-		});
-		if (session == null) return undefined;
-
-		return {
-			provider: integrationId,
 			token: session.accessToken,
 		};
 	}
@@ -829,7 +811,7 @@ export class DraftService implements Disposable {
 			repo = repositoryOrIdentity;
 		}
 
-		return this.getProviderAuthFromRepository(repo);
+		return this.getProviderAuthFromRepoOrIntegrationId(repo);
 	}
 
 	async getCodeSuggestions(
@@ -838,21 +820,19 @@ export class DraftService implements Disposable {
 		options?: { includeArchived?: boolean },
 	): Promise<Draft[]>;
 	async getCodeSuggestions(
-		focusItem: FocusItem,
+		launchpadItem: LaunchpadItem,
 		integrationId: IntegrationId,
 		options?: { includeArchived?: boolean },
 	): Promise<Draft[]>;
 	@log<DraftService['getCodeSuggestions']>({ args: { 0: i => i.id, 1: r => (isRepository(r) ? r.id : r) } })
 	async getCodeSuggestions(
-		item: PullRequest | FocusItem,
+		item: PullRequest | LaunchpadItem,
 		repositoryOrIntegrationId: Repository | IntegrationId,
 		options?: { includeArchived?: boolean },
 	): Promise<Draft[]> {
 		const entityIdentifier = getEntityIdentifierInput(item);
 		const prEntityId = EntityIdentifierUtils.encode(entityIdentifier);
-		const providerAuth = isRepository(repositoryOrIntegrationId)
-			? await this.getProviderAuthFromRepository(repositoryOrIntegrationId)
-			: await this.getProviderAuthForIntegration(repositoryOrIntegrationId);
+		const providerAuth = await this.getProviderAuthFromRepoOrIntegrationId(repositoryOrIntegrationId);
 
 		// swallowing this error as we don't need to fail here
 		try {
@@ -862,7 +842,7 @@ export class DraftService implements Disposable {
 				isArchived: options?.includeArchived != null ? options.includeArchived : true,
 			});
 			return drafts;
-		} catch (e) {
+		} catch (_ex) {
 			return [];
 		}
 	}
@@ -910,7 +890,7 @@ export class DraftService implements Disposable {
 	generateWebUrl(draft: Draft): string;
 	generateWebUrl(draftOrDraftId: Draft | string): string {
 		const id = typeof draftOrDraftId === 'string' ? draftOrDraftId : draftOrDraftId.id;
-		return this.connection.getGkDevUri(`/drafts/${id}`, `?source=gitlens`).toString();
+		return this.container.generateWebGkDevUrl(`/drafts/${id}`);
 	}
 }
 

@@ -1,10 +1,9 @@
+import { getNonce } from '@env/crypto';
 import type { ViewBadge, Webview, WebviewPanel, WebviewView, WindowState } from 'vscode';
 import { Disposable, EventEmitter, Uri, ViewColumn, window, workspace } from 'vscode';
-import { getNonce } from '@env/crypto';
-import type { Commands, CustomEditorTypes, WebviewTypes, WebviewViewTypes } from '../constants';
+import type { Commands } from '../constants.commands';
+import type { CustomEditorTypes, WebviewTypes, WebviewViewTypes } from '../constants.views';
 import type { Container } from '../container';
-import { executeCommand, executeCoreCommand } from '../system/command';
-import { setContext } from '../system/context';
 import { getScopedCounter } from '../system/counter';
 import { debug, logName } from '../system/decorators/log';
 import { serialize } from '../system/decorators/serialize';
@@ -12,6 +11,8 @@ import { getLoggableName, Logger } from '../system/logger';
 import { getLogScope, getNewLogScope, setLogScopeExit } from '../system/logger.scope';
 import { isPromise, pauseOnCancelOrTimeout } from '../system/promise';
 import { maybeStopWatch } from '../system/stopwatch';
+import { executeCommand, executeCoreCommand } from '../system/vscode/command';
+import { setContext } from '../system/vscode/context';
 import type { WebviewContext } from '../system/webview';
 import type {
 	IpcCallMessageType,
@@ -25,7 +26,7 @@ import type {
 } from './protocol';
 import {
 	DidChangeHostWindowFocusNotification,
-	DidChangeWebviewFocusNotfication as DidChangeWebviewFocusNotification,
+	DidChangeWebviewFocusNotification,
 	ExecuteCommand,
 	WebviewFocusChangedCommand,
 	WebviewReadyCommand,
@@ -512,7 +513,7 @@ export class WebviewController<
 		let packed;
 		if (notificationType.pack && params != null) {
 			const sw = maybeStopWatch(
-				getNewLogScope(`${getLoggableName(this)}.notify serializing msg=${notificationType.method}`),
+				getNewLogScope(`${getLoggableName(this)}.notify serializing msg=${notificationType.method}`, true),
 				{
 					log: false,
 					logLevel: 'debug',
@@ -566,9 +567,9 @@ export class WebviewController<
 					clearTimeout(timeout);
 					return s;
 				},
-				ex => {
+				(ex: unknown) => {
 					clearTimeout(timeout);
-					Logger.error(scope, ex);
+					Logger.error(ex, scope);
 					debugger;
 					return false;
 				},
@@ -658,13 +659,15 @@ export function replaceWebviewHtmlTokens<SerializedState>(
 	endOfBody?: string,
 ) {
 	return html.replace(
-		/#{(head|body|endOfBody|webviewId|webviewInstanceId|placement|cspSource|cspNonce|root|webroot)}/g,
+		/#{(head|body|endOfBody|webviewId|webviewInstanceId|placement|cspSource|cspNonce|root|webroot|state)}/g,
 		(_substring: string, token: string) => {
 			switch (token) {
 				case 'head':
 					return head ?? '';
 				case 'body':
 					return body ?? '';
+				case 'state':
+					return bootstrap != null ? JSON.stringify(bootstrap).replace(/"/g, '&quot;') : '';
 				case 'endOfBody':
 					return `${
 						bootstrap != null

@@ -8,6 +8,8 @@ GitLens supercharges your Git experience in VS Code. Maintaining focus is critic
 
 GitLens sets itself apart from other Git tools through its deep level of integration, versatility, and ease of use. GitLens sits directly within your editor, reducing context switching and promoting a more efficient workflow. We know Git is hard and strive to make it as easy as possible while also going beyond the basics with rich visualizations and step-by-step guidance and safety, just to name a few.
 
+> 💡 **Limited-time:** [Upgrade to Pro](https://gitkraken.dev/purchase/checkout?source=gitlens&product=gitlens&promoCode=GLLAUNCHPAD24&context=marketplace) before October 14th and save more than 75%. 💡
+
 ## About This Repo
 
 This is a fork that enables pro feature.
@@ -23,6 +25,7 @@ yarn run package # package
 ```
 
 The result is a `vsix` file under root path.
+
 
 ## Getting Started
 
@@ -293,7 +296,7 @@ Use the `Generate Commit Message` command from the Source Control view's context
 
 # Ready for GitLens Pro?
 
-When you're ready to unlock the full potential of GitLens and our [DevEx platform](https://gitkraken.com/devex?utm_source=gitlens-extension&utm_medium=in-app-links) and enjoy all the benefits on your privately-hosted repos, consider upgrading to GitLens Pro. With GitLens Pro, you'll gain access to [Pro features](https://gitkraken.com/gitlens/pro-features?utm_source=gitlens-extension&utm_medium=in-app-links) on privately-hosted repos.
+When you're ready to unlock the full potential of GitLens and the [GitKrakenDevEx platform](https://gitkraken.com/devex?utm_source=gitlens-extension&utm_medium=in-app-links) and enjoy all the benefits on your privately-hosted repos, consider upgrading to GitLens Pro. With GitLens Pro, you'll gain access to [Pro features](https://gitkraken.com/gitlens/pro-features?utm_source=gitlens-extension&utm_medium=in-app-links) on privately-hosted repos.
 
 To learn more about the pricing and the additional features offered with GitLens Pro, visit the [GitLens Pricing page](https://www.gitkraken.com/gitlens/pricing?utm_source=gitlens-extension&utm_medium=in-app-links). Upgrade to GitLens Pro today and take your Git workflow to the next level!
 
@@ -463,6 +466,7 @@ A big thanks to the people that have contributed to this project 🙏❤️:
 - may ([@m4rch3n1ng](https://github.com/m4rch3n1ng)) &mdash; [contributions](https://github.com/gitkraken/vscode-gitlens/commits?author=m4rch3n1ng)
 - bm-w ([@bm-w](https://github.com/bm-w)) &mdash; [contributions](https://github.com/gitkraken/vscode-gitlens/commits?author=bm-w)
 - Tyler Johnson ([@TJohnsonSE](https://github.com/TJohnsonSE)) &mdash; [contributions](https://github.com/gitkraken/vscode-gitlens/commits?author=TJohnsonSE)
+- Jean Pierre ([@jeanp413](https://github.com/jeanp413)) &mdash; [contributions](https://github.com/gitkraken/vscode-gitlens/commits?author=jeanp413)
 
 Also special thanks to the people that have provided support, testing, brainstorming, etc:
 

@@ -1,27 +1,25 @@
-import type { ConfigurationChangeEvent, Disposable, Event, ExtensionContext } from 'vscode';
-import { EventEmitter, ExtensionMode } from 'vscode';
 import { getSupportedGitProviders, getSupportedRepositoryPathMappingProvider } from '@env/providers';
+import type { ConfigurationChangeEvent, Disposable, Event, ExtensionContext } from 'vscode';
+import { EventEmitter, ExtensionMode, Uri } from 'vscode';
 import type { AIProviderService } from './ai/aiProviderService';
-import { Autolinks } from './annotations/autolinks';
 import { FileAnnotationController } from './annotations/fileAnnotationController';
 import { LineAnnotationController } from './annotations/lineAnnotationController';
 import { ActionRunners } from './api/actionRunners';
+import { Autolinks } from './autolinks';
 import { setDefaultGravatarsStyle } from './avatars';
 import { CacheProvider } from './cache';
 import { GitCodeLensController } from './codelens/codeLensController';
 import type { ToggleFileAnnotationCommandArgs } from './commands/toggleFileAnnotations';
 import type { DateStyle, FileAnnotationType, ModeConfig } from './config';
 import { fromOutputLevel } from './config';
-import { Commands, extensionPrefix } from './constants';
+import { extensionPrefix } from './constants';
+import { Commands } from './constants.commands';
 import { EventBus } from './eventBus';
 import { GitFileSystemProvider } from './git/fsProvider';
 import { GitProviderService } from './git/gitProviderService';
 import { LineHoverController } from './hovers/lineHoverController';
 import type { RepositoryPathMappingProvider } from './pathMapping/repositoryPathMappingProvider';
 import { DraftService } from './plus/drafts/draftsService';
-import { EnrichmentService } from './plus/focus/enrichmentService';
-import { FocusIndicator } from './plus/focus/focusIndicator';
-import { FocusProvider } from './plus/focus/focusProvider';
 import { AccountAuthenticationProvider } from './plus/gk/account/authenticationProvider';
 import { OrganizationService } from './plus/gk/account/organizationService';
 import { SubscriptionService } from './plus/gk/account/subscriptionService';
@@ -31,9 +29,10 @@ import { IntegrationAuthenticationService } from './plus/integrations/authentica
 import { IntegrationService } from './plus/integrations/integrationService';
 import type { GitHubApi } from './plus/integrations/providers/github/github';
 import type { GitLabApi } from './plus/integrations/providers/gitlab/gitlab';
+import { EnrichmentService } from './plus/launchpad/enrichmentService';
+import { LaunchpadIndicator } from './plus/launchpad/launchpadIndicator';
+import { LaunchpadProvider } from './plus/launchpad/launchpadProvider';
 import { RepositoryIdentityService } from './plus/repos/repositoryIdentityService';
-import { registerAccountWebviewView } from './plus/webviews/account/registration';
-import { registerFocusWebviewCommands, registerFocusWebviewPanel } from './plus/webviews/focus/registration';
 import type { GraphWebviewShowingArgs } from './plus/webviews/graph/registration';
 import {
 	registerGraphWebviewCommands,
@@ -54,13 +53,13 @@ import {
 } from './plus/webviews/timeline/registration';
 import { scheduleAddMissingCurrentWorkspaceRepos, WorkspacesService } from './plus/workspaces/workspacesService';
 import { StatusBarController } from './statusbar/statusBarController';
-import { executeCommand } from './system/command';
-import { configuration } from './system/configuration';
 import { log } from './system/decorators/log';
 import { memoize } from './system/decorators/memoize';
-import { Keyboard } from './system/keyboard';
 import { Logger } from './system/logger';
-import type { Storage } from './system/storage';
+import { executeCommand } from './system/vscode/command';
+import { configuration } from './system/vscode/configuration';
+import { Keyboard } from './system/vscode/keyboard';
+import type { Storage } from './system/vscode/storage';
 import { TelemetryService } from './telemetry/telemetry';
 import { UsageTracker } from './telemetry/usageTracker';
 import { GitTerminalLinkProvider } from './terminal/linkProvider';
@@ -73,6 +72,7 @@ import { CommitsView } from './views/commitsView';
 import { ContributorsView } from './views/contributorsView';
 import { DraftsView } from './views/draftsView';
 import { FileHistoryView } from './views/fileHistoryView';
+import { LaunchpadView } from './views/launchpadView';
 import { LineHistoryView } from './views/lineHistoryView';
 import { PullRequestView } from './views/pullRequestView';
 import { RemotesView } from './views/remotesView';
@@ -90,6 +90,7 @@ import {
 	registerCommitDetailsWebviewView,
 	registerGraphDetailsWebviewView,
 } from './webviews/commitDetails/registration';
+import type { HomeWebviewShowingArgs } from './webviews/home/registration';
 import { registerHomeWebviewView } from './webviews/home/registration';
 import { RebaseEditorProvider } from './webviews/rebase/rebaseEditor';
 import { registerSettingsWebviewCommands, registerSettingsWebviewPanel } from './webviews/settings/registration';
@@ -102,7 +103,7 @@ export type Environment = 'dev' | 'staging' | 'production';
 export class Container {
 	static #instance: Container | undefined;
 	static #proxy = new Proxy<Container>({} as Container, {
-		get: function (target, prop) {
+		get: function (_target, prop) {
 			// In case anyone has cached this instance
 			// eslint-disable-next-line @typescript-eslint/no-unsafe-return
 			if (Container.#instance != null) return (Container.#instance as any)[prop];
@@ -192,7 +193,7 @@ export class Container {
 	private _disposables: Disposable[];
 	private _terminalLinks: GitTerminalLinkProvider | undefined;
 	private _webviews: WebviewsController;
-	private _focusIndicator: FocusIndicator | undefined;
+	private _launchpadIndicator: LaunchpadIndicator | undefined;
 
 	private constructor(
 		context: ExtensionContext,
@@ -218,13 +219,12 @@ export class Container {
 		this._disposables.push(
 			(this._accountAuthentication = new AccountAuthenticationProvider(this, this._connection)),
 		);
+		this._disposables.push((this._uri = new UriService(this)));
 		this._disposables.push((this._subscription = new SubscriptionService(this, this._connection, previousVersion)));
 		this._disposables.push((this._organizations = new OrganizationService(this, this._connection)));
 
 		this._disposables.push((this._git = new GitProviderService(this)));
 		this._disposables.push(new GitFileSystemProvider(this));
-
-		this._disposables.push((this._uri = new UriService(this)));
 
 		this._disposables.push((this._deepLinks = new DeepLinkService(this)));
 
@@ -234,7 +234,7 @@ export class Container {
 		this._disposables.push((this._keyboard = new Keyboard()));
 		this._disposables.push((this._vsls = new VslsController(this)));
 		this._disposables.push((this._eventBus = new EventBus()));
-		this._disposables.push((this._focusProvider = new FocusProvider(this)));
+		this._disposables.push((this._launchpadProvider = new LaunchpadProvider(this)));
 
 		this._disposables.push((this._fileAnnotationController = new FileAnnotationController(this)));
 		this._disposables.push((this._lineAnnotationController = new LineAnnotationController(this)));
@@ -249,10 +249,6 @@ export class Container {
 		this._disposables.push(registerGraphWebviewCommands(this, graphPanels));
 		this._disposables.push((this._graphView = registerGraphWebviewView(this._webviews)));
 		this._disposables.push(new GraphStatusBarController(this));
-
-		const focusPanels = registerFocusWebviewPanel(this._webviews);
-		this._disposables.push(focusPanels);
-		this._disposables.push(registerFocusWebviewCommands(focusPanels));
 
 		const timelinePanels = registerTimelineWebviewPanel(this._webviews);
 		this._disposables.push(timelinePanels);
@@ -278,6 +274,7 @@ export class Container {
 		this._disposables.push((this._commitsView = new CommitsView(this)));
 		this._disposables.push((this._pullRequestView = new PullRequestView(this)));
 		this._disposables.push((this._fileHistoryView = new FileHistoryView(this)));
+		this._disposables.push((this._launchpadView = new LaunchpadView(this)));
 		this._disposables.push((this._lineHistoryView = new LineHistoryView(this)));
 		this._disposables.push((this._branchesView = new BranchesView(this)));
 		this._disposables.push((this._remotesView = new RemotesView(this)));
@@ -290,10 +287,9 @@ export class Container {
 		this._disposables.push((this._workspacesView = new WorkspacesView(this)));
 
 		this._disposables.push((this._homeView = registerHomeWebviewView(this._webviews)));
-		this._disposables.push((this._accountView = registerAccountWebviewView(this._webviews)));
 
 		if (configuration.get('launchpad.indicator.enabled')) {
-			this._disposables.push((this._focusIndicator = new FocusIndicator(this, this._focusProvider)));
+			this._disposables.push((this._launchpadIndicator = new LaunchpadIndicator(this, this._launchpadProvider)));
 		}
 
 		if (configuration.get('terminalLinks.enabled')) {
@@ -311,10 +307,15 @@ export class Container {
 				}
 
 				if (configuration.changed(e, 'launchpad.indicator.enabled')) {
-					this._focusIndicator?.dispose();
-					this._focusIndicator = undefined;
+					this._launchpadIndicator?.dispose();
+					this._launchpadIndicator = undefined;
+
+					this.telemetry.sendEvent('launchpad/indicator/hidden');
+
 					if (configuration.get('launchpad.indicator.enabled')) {
-						this._disposables.push((this._focusIndicator = new FocusIndicator(this, this._focusProvider)));
+						this._disposables.push(
+							(this._launchpadIndicator = new LaunchpadIndicator(this, this._launchpadProvider)),
+						);
 					}
 				}
 			}),
@@ -348,7 +349,7 @@ export class Container {
 
 	@log()
 	private async registerGitProviders() {
-		const providers = await getSupportedGitProviders(this);
+		const providers = await getSupportedGitProviders(this, this.authenticationService);
 		for (const provider of providers) {
 			this._disposables.push(this._git.register(provider.descriptor.id, provider));
 		}
@@ -378,11 +379,6 @@ export class Container {
 	private _accountAuthentication: AccountAuthenticationProvider;
 	get accountAuthentication() {
 		return this._accountAuthentication;
-	}
-
-	private readonly _accountView: WebviewViewProxy<[]>;
-	get accountView() {
-		return this._accountView;
 	}
 
 	private readonly _actionRunners: ActionRunners;
@@ -553,9 +549,9 @@ export class Container {
 		return this._fileHistoryView;
 	}
 
-	private readonly _focusProvider: FocusProvider;
-	get focus(): FocusProvider {
-		return this._focusProvider;
+	private readonly _launchpadProvider: LaunchpadProvider;
+	get launchpad(): LaunchpadProvider {
+		return this._launchpadProvider;
 	}
 
 	private readonly _git: GitProviderService;
@@ -621,7 +617,7 @@ export class Container {
 		return this._graphView;
 	}
 
-	private readonly _homeView: WebviewViewProxy<[]>;
+	private readonly _homeView: WebviewViewProxy<HomeWebviewShowingArgs>;
 	get homeView() {
 		return this._homeView;
 	}
@@ -631,21 +627,18 @@ export class Container {
 		return this._context.extension.id;
 	}
 
-	private _integrationAuthentication: IntegrationAuthenticationService | undefined;
-	get integrationAuthentication() {
-		if (this._integrationAuthentication == null) {
-			this._disposables.push(
-				(this._integrationAuthentication = new IntegrationAuthenticationService(this, this._connection)),
-			);
+	private _authenticationService: IntegrationAuthenticationService | undefined;
+	private get authenticationService() {
+		if (this._authenticationService == null) {
+			this._disposables.push((this._authenticationService = new IntegrationAuthenticationService(this)));
 		}
-
-		return this._integrationAuthentication;
+		return this._authenticationService;
 	}
 
 	private _integrations: IntegrationService | undefined;
 	get integrations(): IntegrationService {
 		if (this._integrations == null) {
-			this._disposables.push((this._integrations = new IntegrationService(this, this._connection)));
+			this._disposables.push((this._integrations = new IntegrationService(this, this.authenticationService)));
 		}
 		return this._integrations;
 	}
@@ -653,6 +646,11 @@ export class Container {
 	private readonly _keyboard: Keyboard;
 	get keyboard() {
 		return this._keyboard;
+	}
+
+	private _launchpadView: LaunchpadView;
+	get launchpadView() {
+		return this._launchpadView;
 	}
 
 	private readonly _lineAnnotationController: LineAnnotationController;
@@ -917,6 +915,39 @@ export class Container {
 				};
 			},
 		});
+	}
+
+	@memoize()
+	private get baseGkDevUri(): Uri {
+		if (this.env === 'staging') {
+			return Uri.parse('https://staging.gitkraken.dev');
+		}
+
+		if (this.env === 'dev') {
+			return Uri.parse('https://dev.gitkraken.dev');
+		}
+
+		return Uri.parse('https://gitkraken.dev');
+	}
+
+	getGkDevUri(path?: string, query?: string): Uri {
+		let uri = path != null ? Uri.joinPath(this.baseGkDevUri, path) : this.baseGkDevUri;
+		if (query != null) {
+			uri = uri.with({ query: query });
+		}
+		return uri;
+	}
+
+	getGkDevExchangeUri(token: string, successPath: string, failurePath?: string): Uri {
+		return Uri.joinPath(this.baseGkDevUri, `api/exchange/${token}`).with({
+			query: `success=${encodeURIComponent(successPath)}${
+				failurePath ? `&failure=${encodeURIComponent(failurePath)}` : ''
+			}`,
+		});
+	}
+
+	generateWebGkDevUrl(path?: string): string {
+		return this.getGkDevUri(path, '?source=gitlens').toString();
 	}
 }
 

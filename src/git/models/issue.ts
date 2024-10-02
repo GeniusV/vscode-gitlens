@@ -1,5 +1,5 @@
 import { ColorThemeKind, ThemeColor, ThemeIcon, window } from 'vscode';
-import type { Colors } from '../../constants';
+import type { Colors } from '../../constants.colors';
 import type { ProviderReference } from './remoteProvider';
 
 export type IssueOrPullRequestType = 'issue' | 'pullrequest';
@@ -35,6 +35,7 @@ export interface IssueLabel {
 }
 
 export interface IssueMember {
+	id: string;
 	name: string;
 	avatarUrl?: string;
 	url?: string;
@@ -204,6 +205,7 @@ export function serializeIssue(value: IssueShape): IssueShape {
 		closed: value.closed,
 		state: value.state,
 		author: {
+			id: value.author.id,
 			name: value.author.name,
 			avatarUrl: value.author.avatarUrl,
 			url: value.author.url,
@@ -216,6 +218,7 @@ export function serializeIssue(value: IssueShape): IssueShape {
 						repo: value.repository.repo,
 				  },
 		assignees: value.assignees.map(assignee => ({
+			id: assignee.id,
 			name: assignee.name,
 			avatarUrl: assignee.avatarUrl,
 			url: assignee.url,

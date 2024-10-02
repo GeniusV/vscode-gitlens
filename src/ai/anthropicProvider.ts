@@ -1,10 +1,13 @@
+import { fetch } from '@env/fetch';
 import type { CancellationToken } from 'vscode';
 import { window } from 'vscode';
-import { fetch } from '@env/fetch';
+import type { AnthropicModels } from '../constants.ai';
+import type { TelemetryEvents } from '../constants.telemetry';
 import type { Container } from '../container';
 import { CancellationError } from '../errors';
-import { configuration } from '../system/configuration';
-import type { Storage } from '../system/storage';
+import { sum } from '../system/iterable';
+import { configuration } from '../system/vscode/configuration';
+import type { Storage } from '../system/vscode/storage';
 import type { AIModel, AIProvider } from './aiProviderService';
 import { getApiKey as getApiKeyCore, getMaxCharacters } from './aiProviderService';
 import { cloudPatchMessageSystemPrompt, codeSuggestMessageSystemPrompt, commitMessageSystemPrompt } from './prompts';
@@ -23,20 +26,18 @@ function isSupportedModel(model: AnthropicModel): model is SupportedModel {
 	return !isLegacyModel(model);
 }
 
-export type AnthropicModels =
-	| 'claude-instant-1'
-	| 'claude-2'
-	| 'claude-2.1'
-	| 'claude-3-opus-20240229'
-	| 'claude-3-sonnet-20240229'
-	| 'claude-3-haiku-20240307';
-
 type AnthropicModel = AIModel<typeof provider.id>;
 
 const models: AnthropicModel[] = [
 	{
 		id: 'claude-3-opus-20240229',
 		name: 'Claude 3 Opus',
+		maxTokens: 200000,
+		provider: provider,
+	},
+	{
+		id: 'claude-3-5-sonnet-20240620',
+		name: 'Claude 3.5 Sonnet',
 		maxTokens: 200000,
 		provider: provider,
 	},
@@ -78,6 +79,7 @@ export class AnthropicProvider implements AIProvider<typeof provider.id> {
 	async generateMessage(
 		model: AnthropicModel,
 		diff: string,
+		reporting: TelemetryEvents['ai/generate'],
 		promptConfig: {
 			systemPrompt: string;
 			customPrompt: string;
@@ -96,7 +98,7 @@ export class AnthropicProvider implements AIProvider<typeof provider.id> {
 				[result, maxCodeCharacters] = await this.makeLegacyRequest(
 					model as LegacyModel,
 					apiKey,
-					max => {
+					(max, retries) => {
 						const code = diff.substring(0, max);
 						let prompt = `\n\nHuman: ${promptConfig.systemPrompt}\n\nHuman: Here is the code diff to use to generate the ${promptConfig.contextName}:\n\n${code}\n`;
 						if (options?.context) {
@@ -106,6 +108,10 @@ export class AnthropicProvider implements AIProvider<typeof provider.id> {
 							prompt += `\nHuman: ${promptConfig.customPrompt}\n`;
 						}
 						prompt += '\nAssistant:';
+
+						reporting['retry.count'] = retries;
+						reporting['input.length'] = (reporting['input.length'] ?? 0) + prompt.length;
+
 						return prompt;
 					},
 					4096,
@@ -116,40 +122,50 @@ export class AnthropicProvider implements AIProvider<typeof provider.id> {
 					model,
 					apiKey,
 					promptConfig.systemPrompt,
-					max => {
+					(max, retries) => {
 						const code = diff.substring(0, max);
-						const message: Message = {
-							role: 'user',
-							content: [
-								{
-									type: 'text',
-									text: `Here is the code diff to use to generate the ${promptConfig.contextName}:`,
-								},
-								{
-									type: 'text',
-									text: code,
-								},
-							],
-						};
-						if (options?.context) {
-							message.content.push(
-								{
-									type: 'text',
-									text: `Here is additional context which should be taken into account when generating the ${promptConfig.contextName}:`,
-								},
-								{
-									type: 'text',
-									text: options.context,
-								},
-							);
-						}
-						if (promptConfig.customPrompt) {
-							message.content.push({
-								type: 'text',
-								text: promptConfig.customPrompt,
-							});
-						}
-						return [message];
+						const messages: Message[] = [
+							{
+								role: 'user',
+								content: [
+									{
+										type: 'text',
+										text: `Here is the code diff to use to generate the ${promptConfig.contextName}:`,
+									},
+									{
+										type: 'text',
+										text: code,
+									},
+									...(options?.context
+										? ([
+												{
+													type: 'text',
+													text: `Here is additional context which should be taken into account when generating the ${promptConfig.contextName}:`,
+												},
+												{
+													type: 'text',
+													text: options.context,
+												},
+										  ] satisfies Message['content'])
+										: []),
+									...(promptConfig.customPrompt
+										? ([
+												{
+													type: 'text',
+													text: promptConfig.customPrompt,
+												},
+										  ] satisfies Message['content'])
+										: []),
+								],
+							},
+						];
+
+						reporting['retry.count'] = retries;
+						reporting['input.length'] =
+							(reporting['input.length'] ?? 0) +
+							sum(messages, m => sum(m.content, c => (c.type === 'text' ? c.text.length : 0)));
+
+						return messages;
 					},
 					4096,
 					options?.cancellation,
@@ -171,6 +187,7 @@ export class AnthropicProvider implements AIProvider<typeof provider.id> {
 	async generateDraftMessage(
 		model: AnthropicModel,
 		diff: string,
+		reporting: TelemetryEvents['ai/generate'],
 		options?: { cancellation?: CancellationToken; context?: string; codeSuggestion?: boolean },
 	): Promise<string | undefined> {
 		let customPrompt =
@@ -184,6 +201,7 @@ export class AnthropicProvider implements AIProvider<typeof provider.id> {
 		return this.generateMessage(
 			model,
 			diff,
+			reporting,
 			{
 				systemPrompt:
 					options?.codeSuggestion === true ? codeSuggestMessageSystemPrompt : cloudPatchMessageSystemPrompt,
@@ -200,6 +218,7 @@ export class AnthropicProvider implements AIProvider<typeof provider.id> {
 	async generateCommitMessage(
 		model: AnthropicModel,
 		diff: string,
+		reporting: TelemetryEvents['ai/generate'],
 		options?: { cancellation?: CancellationToken; context?: string },
 	): Promise<string | undefined> {
 		let customPrompt = configuration.get('experimental.generateCommitMessagePrompt');
@@ -210,6 +229,7 @@ export class AnthropicProvider implements AIProvider<typeof provider.id> {
 		return this.generateMessage(
 			model,
 			diff,
+			reporting,
 			{
 				systemPrompt: commitMessageSystemPrompt,
 				customPrompt: customPrompt,
@@ -223,6 +243,7 @@ export class AnthropicProvider implements AIProvider<typeof provider.id> {
 		model: AnthropicModel,
 		message: string,
 		diff: string,
+		reporting: TelemetryEvents['ai/explain'],
 		options?: { cancellation?: CancellationToken },
 	): Promise<string | undefined> {
 		const apiKey = await getApiKey(this.container.storage);
@@ -243,9 +264,9 @@ Do not make any assumptions or invent details that are not supported by the code
 				[result, maxCodeCharacters] = await this.makeLegacyRequest(
 					model as LegacyModel,
 					apiKey,
-					max => {
+					(max, retries) => {
 						const code = diff.substring(0, max);
-						return `\n\nHuman: ${systemPrompt}
+						const prompt = `\n\nHuman: ${systemPrompt}
 
 Human: Here is additional context provided by the author of the changes, which should provide some explanation to why these changes where made. Please strongly consider this information when generating your explanation:
 
@@ -257,6 +278,10 @@ ${code}
 
 Human: Remember to frame your explanation in a way that is suitable for a reviewer to quickly grasp the essence of the changes, the issues they resolve, and their implications on the codebase. And please don't explain how you arrived at the explanation, just provide the explanation.
 Assistant:`;
+						reporting['retry.count'] = retries;
+						reporting['input.length'] = (reporting['input.length'] ?? 0) + prompt.length;
+
+						return prompt;
 					},
 					4096,
 					options?.cancellation,
@@ -266,9 +291,9 @@ Assistant:`;
 					model,
 					apiKey,
 					systemPrompt,
-					max => {
+					(max, retries) => {
 						const code = diff.substring(0, max);
-						return [
+						const messages: Message[] = [
 							{
 								role: 'user',
 								content: [
@@ -295,6 +320,13 @@ Assistant:`;
 								],
 							},
 						];
+
+						reporting['retry.count'] = retries;
+						reporting['input.length'] =
+							(reporting['input.length'] ?? 0) +
+							sum(messages, m => sum(m.content, c => (c.type === 'text' ? c.text.length : 0)));
+
+						return messages;
 					},
 					4096,
 					options?.cancellation,
@@ -359,7 +391,7 @@ Assistant:`;
 		model: SupportedModel,
 		apiKey: string,
 		system: string,
-		messages: (maxCodeCharacters: number) => Message[],
+		messages: (maxCodeCharacters: number, retries: number) => Message[],
 		maxTokens: number,
 		cancellation: CancellationToken | undefined,
 	): Promise<[result: string, maxCodeCharacters: number]> {
@@ -369,11 +401,12 @@ Assistant:`;
 		while (true) {
 			const request: AnthropicMessageRequest = {
 				model: model.id,
-				messages: messages(maxCodeCharacters),
+				messages: messages(maxCodeCharacters, retries),
 				system: system,
 				stream: false,
 				max_tokens: maxTokens,
 			};
+
 			const rsp = await this.fetch(model, apiKey, request, cancellation);
 			if (!rsp.ok) {
 				let json;
@@ -407,7 +440,7 @@ Assistant:`;
 	private async makeLegacyRequest(
 		model: LegacyModel,
 		apiKey: string,
-		prompt: (maxCodeCharacters: number) => string,
+		prompt: (maxCodeCharacters: number, retries: number) => string,
 		maxTokens: number,
 		cancellation: CancellationToken | undefined,
 	): Promise<[result: string, maxCodeCharacters: number]> {
@@ -417,7 +450,7 @@ Assistant:`;
 		while (true) {
 			const request: AnthropicCompletionRequest = {
 				model: model.id,
-				prompt: prompt(maxCodeCharacters),
+				prompt: prompt(maxCodeCharacters, retries),
 				stream: false,
 				max_tokens_to_sample: maxTokens,
 			};

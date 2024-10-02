@@ -1,17 +1,17 @@
 import type { Disposable, TerminalLink, TerminalLinkContext, TerminalLinkProvider } from 'vscode';
 import { commands, window } from 'vscode';
-import type { GitCommandsCommandArgs } from '../commands/gitCommands';
+import type { GitWizardCommandArgs } from '../commands/gitWizard';
 import type { InspectCommandArgs } from '../commands/inspect';
 import type { ShowQuickBranchHistoryCommandArgs } from '../commands/showQuickBranchHistory';
 import type { ShowQuickCommitCommandArgs } from '../commands/showQuickCommit';
-import { Commands } from '../constants';
+import { Commands } from '../constants.commands';
 import type { Container } from '../container';
 import type { PagedResult } from '../git/gitProvider';
 import type { GitBranch } from '../git/models/branch';
 import { getBranchNameWithoutRemote } from '../git/models/branch';
 import { createReference } from '../git/models/reference';
 import type { GitTag } from '../git/models/tag';
-import { configuration } from '../system/configuration';
+import { configuration } from '../system/vscode/configuration';
 
 const commandsRegexShared =
 	/\b(g(?:it)?\b\s*)\b(branch|checkout|cherry-pick|fetch|grep|log|merge|pull|push|rebase|reset|revert|show|stash|status|tag)\b/gi;
@@ -62,14 +62,14 @@ export class GitTerminalLinkProvider implements Disposable, TerminalLinkProvider
 			if (match != null) {
 				const [_, git, command] = match;
 
-				const link: GitTerminalLink<GitCommandsCommandArgs> = {
+				const link: GitTerminalLink<GitWizardCommandArgs> = {
 					startIndex: match.index + git.length,
 					length: command.length,
 					tooltip: 'Open in Git Command Palette',
 					command: {
 						command: Commands.GitCommands,
 						args: {
-							command: command as GitCommandsCommandArgs['command'],
+							command: command as GitWizardCommandArgs['command'],
 						},
 					},
 				};
@@ -146,7 +146,7 @@ export class GitTerminalLinkProvider implements Disposable, TerminalLinkProvider
 
 			if (!shaRegex.test(ref)) {
 				if (rangeRegex.test(ref)) {
-					const link: GitTerminalLink<GitCommandsCommandArgs> = {
+					const link: GitTerminalLink<GitWizardCommandArgs> = {
 						startIndex: match.index,
 						length: ref.length,
 						tooltip: 'Show Commits',

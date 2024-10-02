@@ -2,12 +2,15 @@ import { html, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 import { when } from 'lit/directives/when.js';
-import type { Autolink } from '../../../../annotations/autolinks';
-import type { ManageCloudIntegrationsCommandArgs } from '../../../../commands/cloudIntegrations';
+import type { Autolink } from '../../../../autolinks';
+import type {
+	ConnectCloudIntegrationsCommandArgs,
+	ManageCloudIntegrationsCommandArgs,
+} from '../../../../commands/cloudIntegrations';
+import type { IssueIntegrationId, SupportedCloudIntegrationIds } from '../../../../constants.integrations';
 import type { IssueOrPullRequest } from '../../../../git/models/issue';
 import type { PullRequestShape } from '../../../../git/models/pullRequest';
-import type { IssueIntegrationId } from '../../../../plus/integrations/providers/models';
-import type { Serialized } from '../../../../system/serialize';
+import type { Serialized } from '../../../../system/vscode/serialize';
 import type { State } from '../../../commitDetails/protocol';
 import { messageHeadlineSplitterToken } from '../../../commitDetails/protocol';
 import type { TreeItemAction, TreeItemBase } from '../../shared/components/tree/base';
@@ -171,15 +174,15 @@ export class GlCommitDetails extends GlDetailsBase {
 		const { hasAccount, hasConnectedJira } = this.state;
 
 		let message = html`<a
-				href="command:gitlens.plus.cloudIntegrations.manage?${encodeURIComponent(
+				href="command:gitlens.plus.cloudIntegrations.connect?${encodeURIComponent(
 					JSON.stringify({
-						integrationId: 'jira' as IssueIntegrationId.Jira,
+						integrationIds: ['jira' as IssueIntegrationId.Jira] as SupportedCloudIntegrationIds[],
 						source: 'inspect',
 						detail: {
 							action: 'connect',
 							integration: 'jira',
 						},
-					} satisfies ManageCloudIntegrationsCommandArgs),
+					} satisfies ConnectCloudIntegrationsCommandArgs),
 				)}"
 				>Connect to Jira Cloud</a
 			>
@@ -243,17 +246,26 @@ export class GlCommitDetails extends GlDetailsBase {
 		}
 
 		const { hasAccount, hasConnectedJira } = this.state ?? {};
-		const jiraIntegrationLink = `command:gitlens.plus.cloudIntegrations.manage?${encodeURIComponent(
-			JSON.stringify({
-				integrationId: 'jira' as IssueIntegrationId.Jira,
-				source: 'inspect',
-				detail: {
-					action: 'connect',
-					integration: 'jira',
-				},
-			} satisfies ManageCloudIntegrationsCommandArgs),
-		)}`;
-
+		const jiraIntegrationLink = hasConnectedJira
+			? `command:gitlens.plus.cloudIntegrations.manage?${encodeURIComponent(
+					JSON.stringify({
+						source: 'inspect',
+						detail: {
+							action: 'connect',
+							integration: 'jira',
+						},
+					} satisfies ManageCloudIntegrationsCommandArgs),
+			  )}`
+			: `command:gitlens.plus.cloudIntegrations.connect?${encodeURIComponent(
+					JSON.stringify({
+						integrationIds: ['jira' as IssueIntegrationId.Jira] as SupportedCloudIntegrationIds[],
+						source: 'inspect',
+						detail: {
+							action: 'connect',
+							integration: 'jira',
+						},
+					} satisfies ConnectCloudIntegrationsCommandArgs),
+			  )}`;
 		return html`
 			<webview-pane
 				collapsable
@@ -509,20 +521,17 @@ export class GlCommitDetails extends GlDetailsBase {
 		});
 
 		if (!this.isStash) {
-			actions.push(
-				{
-					icon: 'globe',
-					label: 'Open on remote',
-					action: 'file-open-on-remote',
-				},
-				{
-					icon: 'ellipsis',
-					label: 'Show more actions',
-					action: 'file-more-actions',
-				},
-			);
+			actions.push({
+				icon: 'globe',
+				label: 'Open on remote',
+				action: 'file-open-on-remote',
+			});
 		}
-
+		actions.push({
+			icon: 'ellipsis',
+			label: 'Show more actions',
+			action: 'file-more-actions',
+		});
 		return actions;
 	}
 }

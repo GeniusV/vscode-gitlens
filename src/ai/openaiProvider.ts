@@ -1,31 +1,18 @@
+import { fetch } from '@env/fetch';
 import type { CancellationToken } from 'vscode';
 import { window } from 'vscode';
-import { fetch } from '@env/fetch';
+import type { OpenAIModels } from '../constants.ai';
+import type { TelemetryEvents } from '../constants.telemetry';
 import type { Container } from '../container';
 import { CancellationError } from '../errors';
-import { configuration } from '../system/configuration';
-import type { Storage } from '../system/storage';
+import { sum } from '../system/iterable';
+import { configuration } from '../system/vscode/configuration';
+import type { Storage } from '../system/vscode/storage';
 import type { AIModel, AIProvider } from './aiProviderService';
 import { getApiKey as getApiKeyCore, getMaxCharacters } from './aiProviderService';
 import { cloudPatchMessageSystemPrompt, codeSuggestMessageSystemPrompt, commitMessageSystemPrompt } from './prompts';
 
 const provider = { id: 'openai', name: 'OpenAI' } as const;
-
-export type OpenAIModels =
-	| 'gpt-4o'
-	| 'gpt-4-turbo'
-	| 'gpt-4-turbo-2024-04-09'
-	| 'gpt-4-turbo-preview'
-	| 'gpt-4-0125-preview'
-	| 'gpt-4-1106-preview'
-	| 'gpt-4'
-	| 'gpt-4-0613'
-	| 'gpt-4-32k'
-	| 'gpt-4-32k-0613'
-	| 'gpt-3.5-turbo'
-	| 'gpt-3.5-turbo-0125'
-	| 'gpt-3.5-turbo-1106'
-	| 'gpt-3.5-turbo-16k';
 
 type OpenAIModel = AIModel<typeof provider.id>;
 const models: OpenAIModel[] = [
@@ -35,6 +22,12 @@ const models: OpenAIModel[] = [
 		maxTokens: 128000,
 		provider: provider,
 		default: true,
+	},
+	{
+		id: 'gpt-4o-mini',
+		name: 'GPT-4 Omni Mini',
+		maxTokens: 128000,
+		provider: provider,
 	},
 	{
 		id: 'gpt-4-turbo',
@@ -143,6 +136,7 @@ export class OpenAIProvider implements AIProvider<typeof provider.id> {
 	async generateMessage(
 		model: OpenAIModel,
 		diff: string,
+		reporting: TelemetryEvents['ai/generate'],
 		promptConfig: {
 			systemPrompt: string;
 			customPrompt: string;
@@ -183,6 +177,9 @@ export class OpenAIProvider implements AIProvider<typeof provider.id> {
 					},
 				],
 			};
+
+			reporting['retry.count'] = retries;
+			reporting['input.length'] = (reporting['input.length'] ?? 0) + sum(request.messages, m => m.content.length);
 
 			const rsp = await this.fetch(apiKey, request, options?.cancellation);
 			if (!rsp.ok) {
@@ -231,6 +228,7 @@ export class OpenAIProvider implements AIProvider<typeof provider.id> {
 	async generateDraftMessage(
 		model: OpenAIModel,
 		diff: string,
+		reporting: TelemetryEvents['ai/generate'],
 		options?: {
 			cancellation?: CancellationToken;
 			context?: string;
@@ -248,6 +246,7 @@ export class OpenAIProvider implements AIProvider<typeof provider.id> {
 		return this.generateMessage(
 			model,
 			diff,
+			reporting,
 			{
 				systemPrompt:
 					options?.codeSuggestion === true ? codeSuggestMessageSystemPrompt : cloudPatchMessageSystemPrompt,
@@ -264,6 +263,7 @@ export class OpenAIProvider implements AIProvider<typeof provider.id> {
 	async generateCommitMessage(
 		model: OpenAIModel,
 		diff: string,
+		reporting: TelemetryEvents['ai/generate'],
 		options?: { cancellation?: CancellationToken; context?: string },
 	): Promise<string | undefined> {
 		let customPrompt = configuration.get('experimental.generateCommitMessagePrompt');
@@ -274,6 +274,7 @@ export class OpenAIProvider implements AIProvider<typeof provider.id> {
 		return this.generateMessage(
 			model,
 			diff,
+			reporting,
 			{
 				systemPrompt: commitMessageSystemPrompt,
 				customPrompt: customPrompt,
@@ -287,6 +288,7 @@ export class OpenAIProvider implements AIProvider<typeof provider.id> {
 		model: OpenAIModel,
 		message: string,
 		diff: string,
+		reporting: TelemetryEvents['ai/explain'],
 		options?: { cancellation?: CancellationToken },
 	): Promise<string | undefined> {
 		const apiKey = await getApiKey(this.container.storage);
@@ -324,6 +326,9 @@ Do not make any assumptions or invent details that are not supported by the code
 					},
 				],
 			};
+
+			reporting['retry.count'] = retries;
+			reporting['input.length'] = (reporting['input.length'] ?? 0) + sum(request.messages, m => m.content.length);
 
 			const rsp = await this.fetch(apiKey, request, options?.cancellation);
 			if (!rsp.ok) {
@@ -382,7 +387,7 @@ Do not make any assumptions or invent details that are not supported by the code
 		}
 
 		try {
-			return fetch(url, {
+			return await fetch(url, {
 				headers: {
 					Accept: 'application/json',
 					'Content-Type': 'application/json',

@@ -1,7 +1,7 @@
 import type { TextDocumentShowOptions } from 'vscode';
-import type { Autolink } from '../../annotations/autolinks';
+import type { Autolink } from '../../autolinks';
 import type { Config, DateStyle } from '../../config';
-import type { Sources } from '../../constants';
+import type { Sources } from '../../constants.telemetry';
 import type { GitCommitIdentityShape, GitCommitStats } from '../../git/models/commit';
 import type { GitFileChangeShape } from '../../git/models/file';
 import type { IssueOrPullRequest } from '../../git/models/issue';
@@ -10,7 +10,7 @@ import type { Repository } from '../../git/models/repository';
 import type { Draft, DraftVisibility } from '../../gk/models/drafts';
 import type { Change, DraftUserSelection } from '../../plus/webviews/patchDetails/protocol';
 import type { DateTimeFormat } from '../../system/date';
-import type { Serialized } from '../../system/serialize';
+import type { Serialized } from '../../system/vscode/serialize';
 import type { IpcScope, WebviewState } from '../protocol';
 import { IpcCommand, IpcNotification, IpcRequest } from '../protocol';
 

@@ -1,15 +1,24 @@
 import { Disposable, workspace } from 'vscode';
-import type { ContextKeys } from '../../constants';
+import { getAvatarUriFromGravatarEmail } from '../../avatars';
+import type { ContextKeys } from '../../constants.context';
 import type { Container } from '../../container';
 import type { Subscription } from '../../plus/gk/account/subscription';
-import { isSubscriptionExpired, isSubscriptionPaid, isSubscriptionTrial } from '../../plus/gk/account/subscription';
 import type { SubscriptionChangeEvent } from '../../plus/gk/account/subscriptionService';
-import { registerCommand } from '../../system/command';
-import { getContext, onDidChangeContext } from '../../system/context';
+import { registerCommand } from '../../system/vscode/command';
+import { getContext, onDidChangeContext } from '../../system/vscode/context';
 import type { IpcMessage } from '../protocol';
-import type { WebviewHost, WebviewProvider } from '../webviewProvider';
+import type { WebviewHost, WebviewProvider, WebviewShowingArgs } from '../webviewProvider';
+import type { WebviewShowOptions } from '../webviewsController';
 import type { CollapseSectionParams, DidChangeRepositoriesParams, State } from './protocol';
-import { CollapseSectionCommand, DidChangeOrgSettings, DidChangeRepositories, DidChangeSubscription } from './protocol';
+import {
+	CollapseSectionCommand,
+	DidChangeIntegrationsConnections,
+	DidChangeOrgSettings,
+	DidChangeRepositories,
+	DidChangeSubscription,
+	DidFocusAccount,
+} from './protocol';
+import type { HomeWebviewShowingArgs } from './registration';
 
 const emptyDisposable = Object.freeze({
 	dispose: () => {
@@ -17,8 +26,9 @@ const emptyDisposable = Object.freeze({
 	},
 });
 
-export class HomeWebviewProvider implements WebviewProvider<State> {
+export class HomeWebviewProvider implements WebviewProvider<State, State, HomeWebviewShowingArgs> {
 	private readonly _disposable: Disposable;
+	private _pendingFocusAccount = false;
 
 	constructor(
 		private readonly container: Container,
@@ -31,11 +41,33 @@ export class HomeWebviewProvider implements WebviewProvider<State> {
 				: emptyDisposable,
 			this.container.subscription.onDidChange(this.onSubscriptionChanged, this),
 			onDidChangeContext(this.onContextChanged, this),
+			this.container.integrations.onDidChangeConnectionState(this.onChangeConnectionState, this),
 		);
 	}
 
 	dispose() {
 		this._disposable.dispose();
+	}
+
+	onShowing(
+		loading: boolean,
+		_options?: WebviewShowOptions,
+		...args: WebviewShowingArgs<HomeWebviewShowingArgs, State>
+	) {
+		const [arg] = args as HomeWebviewShowingArgs;
+		if (arg?.focusAccount === true) {
+			if (!loading && this.host.ready && this.host.visible) {
+				queueMicrotask(() => void this.host.notify(DidFocusAccount, undefined));
+				return true;
+			}
+			this._pendingFocusAccount = true;
+		}
+
+		return true;
+	}
+
+	private onChangeConnectionState() {
+		this.notifyDidChangeOnboardingIntegration();
 	}
 
 	private onRepositoriesChanged() {
@@ -60,6 +92,14 @@ export class HomeWebviewProvider implements WebviewProvider<State> {
 
 	onReloaded() {
 		this.notifyDidChangeRepositories();
+	}
+
+	onReady() {
+		if (this._pendingFocusAccount === true) {
+			this._pendingFocusAccount = false;
+
+			void this.host.notify(DidFocusAccount, undefined);
+		}
 	}
 
 	private onCollapseSection(params: CollapseSectionParams) {
@@ -107,15 +147,18 @@ export class HomeWebviewProvider implements WebviewProvider<State> {
 	}
 
 	private async getState(subscription?: Subscription): Promise<State> {
-		subscription ??= await this.container.subscription.getSubscription(true);
+		const subResult = await this.getSubscription(subscription);
+
 		return {
 			...this.host.baseWebviewState,
 			repositories: this.getRepositoriesState(),
 			webroot: this.host.getWebRoot(),
-			promoStates: await this.getCanShowPromos(subscription),
-			subscription: subscription,
+			subscription: subResult.subscription,
+			avatar: subResult.avatar,
+			organizationsCount: subResult.organizationsCount,
 			orgSettings: this.getOrgSettings(),
 			walkthroughCollapsed: this.getWalkthroughCollapsed(),
+			hasAnyIntegrationConnected: this.isAnyIntegrationConnected(),
 		};
 	}
 
@@ -128,33 +171,55 @@ export class HomeWebviewProvider implements WebviewProvider<State> {
 		};
 	}
 
-	private async getCanShowPromos(subscription?: Subscription): Promise<Record<string, boolean>> {
-		const promos = {
-			hs2023: false,
-			pro50: false,
-		};
+	private _hostedIntegrationConnected: boolean | undefined;
+	private isAnyIntegrationConnected(force = false) {
+		if (this._hostedIntegrationConnected == null || force === true) {
+			this._hostedIntegrationConnected =
+				[
+					...this.container.integrations.getConnected('hosting'),
+					...this.container.integrations.getConnected('issues'),
+				].length > 0;
+		}
+		return this._hostedIntegrationConnected;
+	}
 
-		const sub = subscription ?? (await this.container.subscription.getSubscription(true));
-		const expiresTime = new Date('2023-12-31T07:59:00.000Z').getTime(); // 2023-12-30 23:59:00 PST-0800
-		if (Date.now() < expiresTime && !isSubscriptionPaid(sub)) {
-			promos.hs2023 = true;
-		} else if (subscription != null && (isSubscriptionTrial(subscription) || isSubscriptionExpired(subscription))) {
-			promos.pro50 = true;
+	private async getSubscription(subscription?: Subscription) {
+		subscription ??= await this.container.subscription.getSubscription(true);
+
+		let avatar;
+		if (subscription.account?.email) {
+			avatar = getAvatarUriFromGravatarEmail(subscription.account.email, 34).toString();
+		} else {
+			avatar = `${this.host.getWebRoot() ?? ''}/media/gitlens-logo.webp`;
 		}
 
-		return promos;
+		return {
+			subscription: subscription,
+			avatar: avatar,
+			organizationsCount:
+				subscription != null ? ((await this.container.organizations.getOrganizations()) ?? []).length : 0,
+		};
 	}
 
 	private notifyDidChangeRepositories() {
 		void this.host.notify(DidChangeRepositories, this.getRepositoriesState());
 	}
 
+	private notifyDidChangeOnboardingIntegration() {
+		// force rechecking
+		const isConnected = this.isAnyIntegrationConnected(true);
+		void this.host.notify(DidChangeIntegrationsConnections, {
+			hasAnyIntegrationConnected: isConnected,
+		});
+	}
+
 	private async notifyDidChangeSubscription(subscription?: Subscription) {
-		subscription ??= await this.container.subscription.getSubscription(true);
+		const subResult = await this.getSubscription(subscription);
 
 		void this.host.notify(DidChangeSubscription, {
-			promoStates: await this.getCanShowPromos(subscription),
-			subscription: subscription,
+			subscription: subResult.subscription,
+			avatar: subResult.avatar,
+			organizationsCount: subResult.organizationsCount,
 		});
 	}
 

@@ -1,6 +1,6 @@
 import type { TextEditor } from 'vscode';
 import { Uri } from 'vscode';
-import { Commands } from '../constants';
+import { Commands } from '../constants.commands';
 import type { Container } from '../container';
 import { executeGitCommand } from '../git/actions';
 import { GitUri } from '../git/gitUri';
@@ -14,8 +14,9 @@ import {
 	showGenericErrorMessage,
 	showLineUncommittedWarningMessage,
 } from '../messages';
-import { command } from '../system/command';
+import { createMarkdownCommandLink } from '../system/commands';
 import { Logger } from '../system/logger';
+import { command } from '../system/vscode/command';
 import type { CommandContext } from './base';
 import { ActiveEditorCachedCommand, getCommandUri, isCommandContextViewNodeHasCommit } from './base';
 
@@ -29,8 +30,8 @@ export interface ShowQuickCommitFileCommandArgs {
 
 @command()
 export class ShowQuickCommitFileCommand extends ActiveEditorCachedCommand {
-	static getMarkdownCommandArgs(args: ShowQuickCommitFileCommandArgs): string {
-		return super.getMarkdownCommandArgsCore<ShowQuickCommitFileCommandArgs>(Commands.ShowQuickCommitFile, args);
+	static createMarkdownCommandLink(args: ShowQuickCommitFileCommandArgs): string {
+		return createMarkdownCommandLink<ShowQuickCommitFileCommandArgs>(Commands.ShowQuickCommitFile, args);
 	}
 
 	constructor(private readonly container: Container) {

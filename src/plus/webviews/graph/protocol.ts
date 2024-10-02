@@ -22,7 +22,9 @@ import type {
 	UpstreamMetadata,
 	WorkDirStats,
 } from '@gitkraken/gitkraken-components';
-import type { Config, DateStyle } from '../../../config';
+import type { Config, DateStyle, GraphBranchesVisibility } from '../../../config';
+import type { SupportedCloudIntegrationIds } from '../../../constants.integrations';
+import type { SearchQuery } from '../../../constants.search';
 import type { RepositoryVisibility } from '../../../git/gitProvider';
 import type { GitTrackingState } from '../../../git/models/branch';
 import type { GitGraphRowType } from '../../../git/models/graph';
@@ -35,7 +37,7 @@ import type {
 	GitTagReference,
 } from '../../../git/models/reference';
 import type { ProviderReference } from '../../../git/models/remoteProvider';
-import type { GitSearchResultData, SearchQuery } from '../../../git/search';
+import type { GitSearchResultData } from '../../../git/search';
 import type { DateTimeFormat } from '../../../system/date';
 import type { WebviewItemContext, WebviewItemGroupContext } from '../../../system/webview';
 import type { IpcScope, WebviewState } from '../../../webviews/protocol';
@@ -68,6 +70,7 @@ export type GraphScrollMarkerTypes =
 	| 'head'
 	| 'highlights'
 	| 'localBranches'
+	| 'pullRequests'
 	| 'remoteBranches'
 	| 'stashes'
 	| 'tags'
@@ -78,6 +81,7 @@ export type GraphMinimapMarkerTypes =
 	| 'head'
 	| 'highlights'
 	| 'localBranches'
+	| 'pullRequests'
 	| 'remoteBranches'
 	| 'stashes'
 	| 'tags'
@@ -90,6 +94,7 @@ export interface State extends WebviewState {
 	repositories?: GraphRepository[];
 	selectedRepository?: string;
 	selectedRepositoryVisibility?: RepositoryVisibility;
+	branchesVisibility?: GraphBranchesVisibility;
 	branchName?: string;
 	branchState?: BranchState;
 	lastFetched?: Date;
@@ -132,6 +137,7 @@ export interface BranchState extends GitTrackingState {
 		url?: string;
 	};
 	pr?: PullRequestShape;
+	worktree?: boolean;
 }
 
 export type GraphWorkingTreeStats = WorkDirStats;
@@ -147,6 +153,15 @@ export interface GraphRepository {
 	name: string;
 	path: string;
 	isVirtual: boolean;
+	provider?: {
+		name: string;
+		integration?: {
+			id: SupportedCloudIntegrationIds;
+			connected: boolean;
+		};
+		icon?: string;
+		url?: string;
+	};
 }
 
 export interface GraphCommitIdentity {
@@ -176,6 +191,7 @@ export interface GraphComponentConfig {
 	enabledRefMetadataTypes?: GraphRefMetadataType[];
 	enableMultiSelection?: boolean;
 	highlightRowsOnRefHover?: boolean;
+	idLength?: number;
 	minimap?: boolean;
 	minimapDataType?: Config['graph']['minimap']['dataType'];
 	minimapMarkerTypes?: GraphMinimapMarkerTypes[];
@@ -184,7 +200,7 @@ export interface GraphComponentConfig {
 	scrollRowPadding?: number;
 	showGhostRefsOnRowHover?: boolean;
 	showRemoteNamesOnRefs?: boolean;
-	idLength?: number;
+	sidebar: boolean;
 }
 
 export interface GraphColumnConfig {
@@ -269,11 +285,11 @@ export interface UpdateRefsVisibilityParams {
 }
 export const UpdateRefsVisibilityCommand = new IpcCommand<UpdateRefsVisibilityParams>(scope, 'refs/update/visibility');
 
-export interface UpdateExcludeTypeParams {
+export interface UpdateExcludeTypesParams {
 	key: keyof GraphExcludeTypes;
 	value: boolean;
 }
-export const UpdateExcludeTypeCommand = new IpcCommand<UpdateExcludeTypeParams>(scope, 'fitlers/update/excludeType');
+export const UpdateExcludeTypesCommand = new IpcCommand<UpdateExcludeTypesParams>(scope, 'filters/update/excludeTypes');
 
 export interface UpdateGraphConfigurationParams {
 	changes: { [key in keyof GraphComponentConfig]?: GraphComponentConfig[key] };
@@ -283,13 +299,11 @@ export const UpdateGraphConfigurationCommand = new IpcCommand<UpdateGraphConfigu
 	'configuration/update',
 );
 
-export interface UpdateIncludeOnlyRefsParams {
+export interface UpdateIncludedRefsParams {
+	branchesVisibility?: GraphBranchesVisibility;
 	refs?: GraphIncludeOnlyRef[];
 }
-export const UpdateIncludeOnlyRefsCommand = new IpcCommand<UpdateIncludeOnlyRefsParams>(
-	scope,
-	'fitlers/update/includeOnlyRefs',
-);
+export const UpdateIncludedRefsCommand = new IpcCommand<UpdateIncludedRefsParams>(scope, 'filters/update/includedRefs');
 
 export interface UpdateSelectionParams {
 	selection: { id: string; type: GitGraphRowType }[];
@@ -297,6 +311,12 @@ export interface UpdateSelectionParams {
 export const UpdateSelectionCommand = new IpcCommand<UpdateSelectionParams>(scope, 'selection/update');
 
 // REQUESTS
+
+export interface ChooseRefParams {
+	alt: boolean;
+}
+export type DidChooseRefParams = { name: string; sha: string } | undefined;
+export const ChooseRefRequest = new IpcRequest<ChooseRefParams, DidChooseRefParams>(scope, 'chooseRef');
 
 export interface EnsureRowParams {
 	id: string;
@@ -307,6 +327,29 @@ export interface DidEnsureRowParams {
 	remapped?: string;
 }
 export const EnsureRowRequest = new IpcRequest<EnsureRowParams, DidEnsureRowParams>(scope, 'rows/ensure');
+
+export type DidGetCountParams =
+	| {
+			branches: number;
+			remotes: number;
+			stashes?: number;
+			tags: number;
+			worktrees?: number;
+	  }
+	| undefined;
+export const GetCountsRequest = new IpcRequest<void, DidGetCountParams>(scope, 'counts');
+
+export type GetRowHoverParams = {
+	type: GitGraphRowType;
+	id: string;
+};
+
+export interface DidGetRowHoverParams {
+	id: string;
+	markdown: PromiseSettledResult<string>;
+}
+
+export const GetRowHoverRequest = new IpcRequest<GetRowHoverParams, DidGetRowHoverParams>(scope, 'row/hover/get');
 
 export interface SearchParams {
 	search?: SearchQuery;
@@ -328,6 +371,14 @@ export interface DidSearchParams {
 export const SearchRequest = new IpcRequest<SearchParams, DidSearchParams>(scope, 'search');
 
 // NOTIFICATIONS
+
+export interface DidChangeRepoConnectionParams {
+	repositories?: GraphRepository[];
+}
+export const DidChangeRepoConnectionNotification = new IpcNotification<DidChangeRepoConnectionParams>(
+	scope,
+	'repositories/integration/didChange',
+);
 
 export interface DidChangeParams {
 	state: State;
@@ -356,6 +407,14 @@ export interface DidChangeAvatarsParams {
 }
 export const DidChangeAvatarsNotification = new IpcNotification<DidChangeAvatarsParams>(scope, 'avatars/didChange');
 
+export interface DidChangeBranchStateParams {
+	branchState: BranchState;
+}
+export const DidChangeBranchStateNotification = new IpcNotification<DidChangeBranchStateParams>(
+	scope,
+	'branchState/didChange',
+);
+
 export interface DidChangeRefsMetadataParams {
 	metadata: GraphRefsMetadata | null | undefined;
 }
@@ -380,6 +439,7 @@ export const DidChangeScrollMarkersNotification = new IpcNotification<DidChangeS
 );
 
 export interface DidChangeRefsVisibilityParams {
+	branchesVisibility: GraphBranchesVisibility;
 	excludeRefs?: GraphExcludeRefs;
 	excludeTypes?: GraphExcludeTypes;
 	includeOnlyRefs?: GraphIncludeOnlyRefs;

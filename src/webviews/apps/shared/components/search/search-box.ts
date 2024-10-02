@@ -1,9 +1,9 @@
+import { isMac } from '@env/platform';
 import type { TemplateResult } from 'lit';
 import { css, html } from 'lit';
 import { customElement, property, query } from 'lit/decorators.js';
 import type { Disposable } from 'vscode';
-import { isMac } from '@env/platform';
-import type { SearchQuery } from '../../../../../git/search';
+import type { SearchQuery } from '../../../../../constants.search';
 import { pluralize } from '../../../../../system/string';
 import { DOM } from '../../dom';
 import { GlElement } from '../element';
@@ -264,6 +264,7 @@ export class GlSearchBox extends GlElement {
 	override render() {
 		return html`<gl-search-input
 				id="search-input"
+				exportparts="search: search"
 				.errorMessage="${this.errorMessage}"
 				.label="${this.label}"
 				.placeholder="${this.placeholder}"

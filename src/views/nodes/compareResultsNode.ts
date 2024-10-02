@@ -1,7 +1,7 @@
+import { md5 } from '@env/crypto';
 import type { TreeCheckboxChangeEvent } from 'vscode';
 import { Disposable, ThemeIcon, TreeItem, TreeItemCheckboxState, TreeItemCollapsibleState, window } from 'vscode';
-import { md5 } from '@env/crypto';
-import type { StoredNamedRef } from '../../constants';
+import type { StoredNamedRef } from '../../constants.storage';
 import type { FilesComparison } from '../../git/actions/commit';
 import { GitUri } from '../../git/gitUri';
 import { createRevisionRange, shortenRevision } from '../../git/models/reference';
@@ -136,9 +136,9 @@ export class CompareResultsNode extends SubscribeableViewNode<
 			const ahead = this.ahead;
 			const behind = this.behind;
 
-			const aheadBehindCounts = await this.view.container.git.getAheadBehindCommitCount(
+			const counts = await this.view.container.git.getLeftRightCommitCount(
 				this.repoPath,
-				[createRevisionRange(behind.ref1 || 'HEAD', behind.ref2, '...')],
+				createRevisionRange(behind.ref1 || 'HEAD', behind.ref2, '...'),
 				{ authors: this.filterByAuthors },
 			);
 
@@ -164,7 +164,7 @@ export class CompareResultsNode extends SubscribeableViewNode<
 						},
 					},
 					{
-						description: pluralize('commit', aheadBehindCounts?.behind ?? 0),
+						description: pluralize('commit', counts?.right ?? 0),
 						expand: false,
 					},
 				),
@@ -184,7 +184,7 @@ export class CompareResultsNode extends SubscribeableViewNode<
 						},
 					},
 					{
-						description: pluralize('commit', aheadBehindCounts?.ahead ?? 0),
+						description: pluralize('commit', counts?.left ?? 0),
 						expand: false,
 					},
 				),

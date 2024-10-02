@@ -1,6 +1,6 @@
+import { getTempFile } from '@env/platform';
 import type { Disposable, TextDocumentShowOptions } from 'vscode';
 import { env, Uri, window, workspace } from 'vscode';
-import { getTempFile } from '@env/platform';
 import type { CreatePullRequestActionContext, OpenPullRequestActionContext } from '../api/gitlens';
 import type { DiffWithCommandArgs } from '../commands/diffWith';
 import type { DiffWithPreviousCommandArgs } from '../commands/diffWithPrevious';
@@ -8,9 +8,10 @@ import type { DiffWithWorkingCommandArgs } from '../commands/diffWithWorking';
 import type { OpenFileAtRevisionCommandArgs } from '../commands/openFileAtRevision';
 import type { OpenOnRemoteCommandArgs } from '../commands/openOnRemote';
 import type { ViewShowBranchComparison } from '../config';
-import { Commands, GlyphChars } from '../constants';
+import { GlyphChars } from '../constants';
+import { Commands } from '../constants.commands';
 import type { Container } from '../container';
-import { browseAtRevision } from '../git/actions';
+import { browseAtRevision, executeGitCommand } from '../git/actions';
 import * as BranchActions from '../git/actions/branch';
 import * as CommitActions from '../git/actions/commit';
 import * as ContributorActions from '../git/actions/contributor';
@@ -22,12 +23,21 @@ import * as WorktreeActions from '../git/actions/worktree';
 import { GitUri } from '../git/gitUri';
 import { deletedOrMissing } from '../git/models/constants';
 import { matchContributor } from '../git/models/contributor';
-import { getComparisonRefsForPullRequest } from '../git/models/pullRequest';
+import {
+	ensurePullRequestRefs,
+	getComparisonRefsForPullRequest,
+	getOpenedPullRequestRepo,
+	getOrOpenPullRequestRepository,
+	getRepositoryIdentityForPullRequest,
+} from '../git/models/pullRequest';
 import { createReference, shortenRevision } from '../git/models/reference';
 import { RemoteResourceType } from '../git/models/remoteResource';
 import { showPatchesView } from '../plus/drafts/actions';
+import { getPullRequestBranchDeepLink } from '../plus/launchpad/launchpadProvider';
 import { showContributorsPicker } from '../quickpicks/contributorsPicker';
-import { mapAsync } from '../system/array';
+import { filterMap, mapAsync } from '../system/array';
+import { log } from '../system/decorators/log';
+import { partial, sequentialize } from '../system/function';
 import {
 	executeActionCommand,
 	executeCommand,
@@ -35,13 +45,13 @@ import {
 	executeCoreGitCommand,
 	executeEditorCommand,
 	registerCommand,
-} from '../system/command';
-import { configuration } from '../system/configuration';
-import { setContext } from '../system/context';
-import { log } from '../system/decorators/log';
-import { partial, sequentialize } from '../system/function';
-import type { OpenWorkspaceLocation } from '../system/utils';
-import { openUrl, openWorkspace, revealInFileExplorer } from '../system/utils';
+} from '../system/vscode/command';
+import { configuration } from '../system/vscode/configuration';
+import { setContext } from '../system/vscode/context';
+import type { OpenWorkspaceLocation } from '../system/vscode/utils';
+import { openUrl, openWorkspace, revealInFileExplorer } from '../system/vscode/utils';
+import { DeepLinkActionType } from '../uris/deepLinks/deepLink';
+import type { LaunchpadItemNode } from './launchpadView';
 import type { RepositoryFolderNode } from './nodes/abstract/repositoryFolderNode';
 import type { ClipboardType } from './nodes/abstract/viewNode';
 import {
@@ -292,6 +302,7 @@ export class ViewCommands {
 
 		registerViewCommand('gitlens.views.compareAncestryWithWorking', this.compareAncestryWithWorking, this);
 		registerViewCommand('gitlens.views.compareWithHead', this.compareHeadWith, this);
+		registerViewCommand('gitlens.views.compareBranchWithHead', this.compareBranchWithHead, this);
 		registerViewCommand('gitlens.views.compareWithMergeBase', this.compareWithMergeBase, this);
 		registerViewCommand('gitlens.views.compareWithUpstream', this.compareWithUpstream, this);
 		registerViewCommand('gitlens.views.compareWithSelected', this.compareWithSelected, this);
@@ -356,6 +367,7 @@ export class ViewCommands {
 		registerViewCommand('gitlens.views.deleteWorktree', this.deleteWorktree, this);
 		registerViewCommand('gitlens.views.deleteWorktree.multi', this.deleteWorktree, this, true);
 		registerViewCommand('gitlens.views.openWorktree', this.openWorktree, this);
+		registerViewCommand('gitlens.views.openInWorktree', this.openInWorktree, this);
 		registerViewCommand('gitlens.views.revealRepositoryInExplorer', this.revealRepositoryInExplorer, this);
 		registerViewCommand('gitlens.views.revealWorktreeInExplorer', this.revealWorktreeInExplorer, this);
 		registerViewCommand(
@@ -586,7 +598,7 @@ export class ViewCommands {
 		if (!node.is('worktree')) return undefined;
 
 		const worktrees = nodes?.length ? nodes.map(n => n.worktree) : [node.worktree];
-		const uris = worktrees.filter(w => !w.main && !w.opened).map(w => w.uri);
+		const uris = worktrees.filter(w => !w.isDefault && !w.opened).map(w => w.uri);
 		return WorktreeActions.remove(node.repoPath, uris);
 	}
 
@@ -669,11 +681,25 @@ export class ViewCommands {
 	}
 
 	@log()
-	private async openPullRequestChanges(node: PullRequestNode) {
-		if (!node.is('pullrequest')) return Promise.resolve();
-		if (node.pullRequest.refs?.base == null || node.pullRequest.refs.head == null) return Promise.resolve();
+	private async openPullRequestChanges(node: PullRequestNode | LaunchpadItemNode) {
+		if (!node.is('pullrequest') && !node.is('launchpad-item')) return Promise.resolve();
 
-		const refs = await getComparisonRefsForPullRequest(this.container, node.repoPath, node.pullRequest.refs);
+		const pr = node.pullRequest;
+		if (pr?.refs?.base == null || pr?.refs.head == null) return Promise.resolve();
+
+		const repo = await getOpenedPullRequestRepo(this.container, pr, node.repoPath);
+		if (repo == null) return Promise.resolve();
+
+		const refs = getComparisonRefsForPullRequest(repo.path, pr.refs);
+		const counts = await ensurePullRequestRefs(
+			this.container,
+			pr,
+			repo,
+			{ promptMessage: `Unable to open changes for PR #${pr.id} because of a missing remote.` },
+			refs,
+		);
+		if (counts == null) return Promise.resolve();
+
 		return CommitActions.openComparisonChanges(
 			this.container,
 			{
@@ -682,17 +708,31 @@ export class ViewCommands {
 				rhs: refs.head.ref,
 			},
 			{
-				title: `Changes in Pull Request #${node.pullRequest.id}`,
+				title: `Changes in Pull Request #${pr.id}`,
 			},
 		);
 	}
 
 	@log()
-	private async openPullRequestComparison(node: PullRequestNode) {
-		if (!node.is('pullrequest')) return Promise.resolve();
-		if (node.pullRequest.refs?.base == null || node.pullRequest.refs.head == null) return Promise.resolve();
+	private async openPullRequestComparison(node: PullRequestNode | LaunchpadItemNode) {
+		if (!node.is('pullrequest') && !node.is('launchpad-item')) return Promise.resolve();
 
-		const refs = await getComparisonRefsForPullRequest(this.container, node.repoPath, node.pullRequest.refs);
+		const pr = node.pullRequest;
+		if (pr?.refs?.base == null || pr?.refs.head == null) return Promise.resolve();
+
+		const repo = await getOpenedPullRequestRepo(this.container, pr, node.repoPath);
+		if (repo == null) return Promise.resolve();
+
+		const refs = getComparisonRefsForPullRequest(repo.path, pr.refs);
+		const counts = await ensurePullRequestRefs(
+			this.container,
+			pr,
+			repo,
+			{ promptMessage: `Unable to open comparison for PR #${pr.id} because of a missing remote.` },
+			refs,
+		);
+		if (counts == null) return Promise.resolve();
+
 		return this.container.searchAndCompareView.compare(refs.repoPath, refs.head, refs.base);
 	}
 
@@ -709,11 +749,12 @@ export class ViewCommands {
 
 	@log()
 	private async openWorktree(
-		node: WorktreeNode,
-		nodes?: WorktreeNode[],
+		node: BranchNode | WorktreeNode,
+		nodes?: (BranchNode | WorktreeNode)[],
 		options?: { location?: OpenWorkspaceLocation },
 	) {
-		if (!node.is('worktree')) return;
+		if (!node.is('branch') && !node.is('worktree')) return;
+		if (node.worktree == null) return;
 
 		let uri;
 		if (nodes?.length && options?.location === 'newWindow') {
@@ -724,7 +765,9 @@ export class ViewCommands {
 
 			// TODO@eamodio hash the folder paths to get a unique, but re-usable workspace name?
 			const codeWorkspace: VSCodeWorkspace = {
-				folders: nodes.map(n => ({ name: n.worktree.name, path: n.worktree.uri.fsPath })),
+				folders: filterMap(nodes, n =>
+					n.worktree != null ? { name: n.worktree.name, path: n.worktree.uri.fsPath } : undefined,
+				),
 				settings: {},
 			};
 			uri = Uri.file(getTempFile(`worktrees-${Date.now()}.code-workspace`));
@@ -735,6 +778,42 @@ export class ViewCommands {
 		}
 
 		openWorkspace(uri, options);
+	}
+
+	@log()
+	private async openInWorktree(node: BranchNode | PullRequestNode | LaunchpadItemNode) {
+		if (!node.is('branch') && !node.is('pullrequest') && !node.is('launchpad-item')) return;
+
+		if (node.is('branch')) {
+			return executeGitCommand({
+				command: 'switch',
+				state: {
+					repos: node.repo,
+					reference: node.branch,
+					skipWorktreeConfirmations: true,
+				},
+			});
+		}
+
+		if (node.is('pullrequest') || node.is('launchpad-item')) {
+			const pr = node.pullRequest;
+			if (pr?.refs?.head == null) return Promise.resolve();
+
+			const repoIdentity = getRepositoryIdentityForPullRequest(pr);
+			if (repoIdentity.remote.url == null) return Promise.resolve();
+
+			const deepLink = getPullRequestBranchDeepLink(
+				this.container,
+				pr.refs.head.branch,
+				repoIdentity.remote.url,
+				DeepLinkActionType.SwitchToPullRequestWorktree,
+			);
+
+			const prRepo = await getOrOpenPullRequestRepository(this.container, pr, {
+				skipVirtual: true,
+			});
+			return this.container.deepLinks.processDeepLinkUri(deepLink, false, prRepo);
+		}
 	}
 
 	@log()
@@ -893,10 +972,11 @@ export class ViewCommands {
 	}
 
 	@log()
-	private revealWorktreeInExplorer(node: WorktreeNode) {
-		if (!node.is('worktree')) return undefined;
+	private revealWorktreeInExplorer(nodeOrUrl: WorktreeNode | string) {
+		if (typeof nodeOrUrl === 'string') return revealInFileExplorer(Uri.parse(nodeOrUrl));
+		if (!nodeOrUrl.is('worktree')) return undefined;
 
-		return revealInFileExplorer(node.worktree.uri);
+		return revealInFileExplorer(nodeOrUrl.worktree.uri);
 	}
 
 	@log()
@@ -1003,14 +1083,27 @@ export class ViewCommands {
 	}
 
 	@log()
-	private compareHeadWith(node: ViewRefNode | ViewRefFileNode) {
+	private async compareHeadWith(node: ViewRefNode | ViewRefFileNode) {
 		if (node instanceof ViewRefFileNode) {
 			return this.compareFileWith(node.repoPath, node.uri, node.ref.ref, undefined, 'HEAD');
 		}
 
 		if (!(node instanceof ViewRefNode)) return Promise.resolve();
 
-		return this.container.searchAndCompareView.compare(node.repoPath, 'HEAD', node.ref);
+		const [ref1, ref2] = await CommitActions.getOrderedComparisonRefs(
+			this.container,
+			node.repoPath,
+			'HEAD',
+			node.ref.ref,
+		);
+		return this.container.searchAndCompareView.compare(node.repoPath, ref1, ref2);
+	}
+
+	@log()
+	private compareBranchWithHead(node: BranchNode) {
+		if (!(node instanceof ViewRefNode)) return Promise.resolve();
+
+		return this.container.searchAndCompareView.compare(node.repoPath, node.ref, 'HEAD');
 	}
 
 	@log()
@@ -1109,7 +1202,7 @@ export class ViewCommands {
 			rhsUri = await this.container.git.getWorkingUri(repoPath, lhsUri);
 		}
 
-		return executeCommand<DiffWithCommandArgs>(Commands.DiffWith, {
+		return executeCommand<DiffWithCommandArgs, void>(Commands.DiffWith, {
 			repoPath: repoPath,
 			lhs: {
 				sha: lhsRef,

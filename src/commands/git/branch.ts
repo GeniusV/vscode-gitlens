@@ -3,12 +3,17 @@ import type { Container } from '../../container';
 import type { GitBranchReference, GitReference } from '../../git/models/reference';
 import { getNameWithoutRemote, getReferenceLabel, isRevisionReference } from '../../git/models/reference';
 import { Repository } from '../../git/models/repository';
+import type { GitWorktree } from '../../git/models/worktree';
+import { getWorktreesByBranch } from '../../git/models/worktree';
+import { showGenericErrorMessage } from '../../messages';
 import type { QuickPickItemOfT } from '../../quickpicks/items/common';
+import { createQuickPickSeparator } from '../../quickpicks/items/common';
 import type { FlagsQuickPickItem } from '../../quickpicks/items/flags';
 import { createFlagsQuickPickItem } from '../../quickpicks/items/flags';
+import { ensureArray } from '../../system/array';
+import { Logger } from '../../system/logger';
 import { pluralize } from '../../system/string';
 import type { ViewsWithRepositoryFolders } from '../../views/viewBase';
-import { getSteps } from '../gitCommands.utils';
 import type {
 	AsyncStepResultGenerator,
 	PartialStepState,
@@ -34,6 +39,7 @@ import {
 	pickBranchStep,
 	pickRepositoryStep,
 } from '../quickCommand.steps';
+import { getSteps } from '../quickWizard.utils';
 
 interface Context {
 	repos: Repository[];
@@ -334,7 +340,7 @@ export class BranchGitCommand extends QuickCommand {
 				const result = yield* pickBranchOrTagStep(state, context, {
 					placeholder: context =>
 						`Choose a branch${context.showTags ? ' or tag' : ''} to create the new branch from`,
-					picked: state.reference?.ref ?? (await state.repo.getBranch())?.ref,
+					picked: state.reference?.ref ?? (await state.repo.git.getBranch())?.ref,
 					titleContext: ' from',
 					value: isRevisionReference(state.reference) ? state.reference.ref : undefined,
 				});
@@ -374,6 +380,7 @@ export class BranchGitCommand extends QuickCommand {
 							subcommand: 'create',
 							reference: state.reference,
 							createBranch: state.name,
+							repo: state.repo,
 						},
 					},
 					this.pickedVia,
@@ -388,7 +395,13 @@ export class BranchGitCommand extends QuickCommand {
 			if (state.flags.includes('--switch')) {
 				await state.repo.switch(state.reference.ref, { createBranch: state.name });
 			} else {
-				state.repo.branch(...state.flags, state.name, state.reference.ref);
+				try {
+					await state.repo.git.createBranch(state.name, state.reference.ref);
+				} catch (ex) {
+					Logger.error(ex);
+					// TODO likely need some better error handling here
+					return showGenericErrorMessage('Unable to create branch');
+				}
 			}
 		}
 	}
@@ -421,7 +434,10 @@ export class BranchGitCommand extends QuickCommand {
 		return canPickStepContinue(step, state, selection) ? selection[0].item : StepResultBreak;
 	}
 
-	private *deleteCommandSteps(state: DeleteStepState | PruneStepState, context: Context): StepResultGenerator<void> {
+	private async *deleteCommandSteps(
+		state: DeleteStepState | PruneStepState,
+		context: Context,
+	): AsyncStepResultGenerator<void> {
 		const prune = state.subcommand === 'prune';
 		if (state.flags == null) {
 			state.flags = [];
@@ -432,6 +448,8 @@ export class BranchGitCommand extends QuickCommand {
 				state.references = [state.references];
 			}
 
+			const worktreesByBranch = await getWorktreesByBranch(state.repo, { includeDefault: true });
+
 			if (
 				state.counter < 3 ||
 				state.references == null ||
@@ -440,7 +458,9 @@ export class BranchGitCommand extends QuickCommand {
 				context.title = getTitle('Branches', state.subcommand);
 
 				const result = yield* pickBranchesStep(state, context, {
-					filter: prune ? b => !b.current && Boolean(b.upstream?.missing) : b => !b.current,
+					filter: prune
+						? b => !b.current && Boolean(b.upstream?.missing) && !worktreesByBranch.get(b.id)?.isDefault
+						: b => !b.current && !worktreesByBranch.get(b.id)?.isDefault,
 					picked: state.references?.map(r => r.ref),
 					placeholder: prune
 						? 'Choose branches with missing upstreams to delete'
@@ -462,6 +482,34 @@ export class BranchGitCommand extends QuickCommand {
 			);
 
 			assertStateStepDeleteBranches(state);
+
+			const worktrees = this.getSelectedWorktrees(state, worktreesByBranch);
+			if (worktrees.length) {
+				const result = yield* getSteps(
+					this.container,
+					{
+						command: 'worktree',
+						state: {
+							subcommand: 'delete',
+							repo: state.repo,
+							uris: worktrees.map(wt => wt.uri),
+							startingFromBranchDelete: true,
+							overrides: {
+								title: `Delete ${worktrees.length === 1 ? 'Worktree' : 'Worktrees'} for ${
+									worktrees.length === 1 ? 'Branch' : 'Branches'
+								}`,
+							},
+						},
+					},
+					this.pickedVia,
+				);
+				if (result !== StepResultBreak) {
+					// we get here if it was a step back from the delete worktrees picker
+					state.counter--;
+					continue;
+				}
+			}
+
 			const result = yield* this.deleteCommandConfirmStep(state, context);
 			if (result === StepResultBreak) continue;
 
@@ -473,6 +521,22 @@ export class BranchGitCommand extends QuickCommand {
 				remote: state.flags.includes('--remotes'),
 			});
 		}
+	}
+
+	private getSelectedWorktrees(
+		state: DeleteStepState | PruneStepState,
+		worktreesByBranch: Map<string, GitWorktree>,
+	): GitWorktree[] {
+		const worktrees: GitWorktree[] = [];
+
+		for (const ref of ensureArray(state.references)) {
+			const worktree = worktreesByBranch.get(ref.id!);
+			if (worktree != null && !worktree.isDefault) {
+				worktrees.push(worktree);
+			}
+		}
+
+		return worktrees;
 	}
 
 	private *deleteCommandConfirmStep(
@@ -498,17 +562,14 @@ export class BranchGitCommand extends QuickCommand {
 
 			if (state.subcommand !== 'prune' && state.references.some(b => b.upstream != null)) {
 				confirmations.push(
+					createQuickPickSeparator(),
 					createFlagsQuickPickItem<DeleteFlags>(state.flags, ['--remotes'], {
-						label: `${context.title} & Remote${
-							state.references.filter(b => !b.remote).length > 1 ? 's' : ''
-						}`,
+						label: 'Delete Local & Remote Branches',
 						description: '--remotes',
 						detail: `Will delete ${getReferenceLabel(state.references)} and any remote tracking branches`,
 					}),
 					createFlagsQuickPickItem<DeleteFlags>(state.flags, ['--force', '--remotes'], {
-						label: `Force ${context.title} & Remote${
-							state.references.filter(b => !b.remote).length > 1 ? 's' : ''
-						}`,
+						label: 'Force Delete Local & Remote Branches',
 						description: '--force --remotes',
 						detail: `Will forcibly delete ${getReferenceLabel(
 							state.references,
@@ -561,7 +622,13 @@ export class BranchGitCommand extends QuickCommand {
 			state.flags = result;
 
 			endSteps(state);
-			state.repo.branch(...state.flags, state.reference.ref, state.name);
+			try {
+				await state.repo.git.renameBranch(state.reference.ref, state.name);
+			} catch (ex) {
+				Logger.error(ex);
+				// TODO likely need some better error handling here
+				return showGenericErrorMessage('Unable to rename branch');
+			}
 		}
 	}
 

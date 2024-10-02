@@ -1,19 +1,19 @@
-import type { AuthenticationSession, Disposable, QuickInputButton } from 'vscode';
+import type { Disposable, QuickInputButton } from 'vscode';
 import { env, ThemeIcon, Uri, window } from 'vscode';
+import { HostingIntegrationId } from '../../../constants.integrations';
 import { base64 } from '../../../system/string';
-import type {
-	IntegrationAuthenticationProvider,
-	IntegrationAuthenticationSessionDescriptor,
-} from './integrationAuthentication';
+import type { IntegrationAuthenticationSessionDescriptor } from './integrationAuthentication';
+import { LocalIntegrationAuthenticationProvider } from './integrationAuthentication';
+import type { ProviderAuthenticationSession } from './models';
 
-export class BitbucketAuthenticationProvider implements IntegrationAuthenticationProvider {
-	getSessionId(descriptor?: IntegrationAuthenticationSessionDescriptor): string {
-		return descriptor?.domain ?? '';
+export class BitbucketAuthenticationProvider extends LocalIntegrationAuthenticationProvider<HostingIntegrationId.Bitbucket> {
+	protected override get authProviderId(): HostingIntegrationId.Bitbucket {
+		return HostingIntegrationId.Bitbucket;
 	}
 
-	async createSession(
+	override async createSession(
 		descriptor?: IntegrationAuthenticationSessionDescriptor,
-	): Promise<AuthenticationSession | undefined> {
+	): Promise<ProviderAuthenticationSession | undefined> {
 		let bitbucketUsername: string | undefined = descriptor?.username as string | undefined;
 		if (!bitbucketUsername) {
 			const infoButton: QuickInputButton = {
@@ -127,6 +127,7 @@ export class BitbucketAuthenticationProvider implements IntegrationAuthenticatio
 				id: '',
 				label: '',
 			},
+			cloud: false,
 		};
 	}
 }

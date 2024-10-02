@@ -1,12 +1,12 @@
 import type { TextEditor, Uri } from 'vscode';
-import { Commands } from '../constants';
+import { Commands } from '../constants.commands';
 import type { Container } from '../container';
 import { GitUri } from '../git/gitUri';
 import { RemoteResourceType } from '../git/models/remoteResource';
 import { showGenericErrorMessage } from '../messages';
 import { getBestRepositoryOrShowPicker } from '../quickpicks/repositoryPicker';
-import { command, executeCommand } from '../system/command';
 import { Logger } from '../system/logger';
+import { command, executeCommand } from '../system/vscode/command';
 import { ActiveEditorCommand, getCommandUri } from './base';
 import type { OpenOnRemoteCommandArgs } from './openOnRemote';
 
@@ -25,7 +25,7 @@ export class OpenCurrentBranchOnRemoteCommand extends ActiveEditorCommand {
 		if (repository == null) return;
 
 		try {
-			const branch = await repository.getBranch();
+			const branch = await repository.git.getBranch();
 			if (branch?.name) {
 				void (await executeCommand<OpenOnRemoteCommandArgs>(Commands.OpenOnRemote, {
 					resource: {

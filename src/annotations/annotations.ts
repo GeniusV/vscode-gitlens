@@ -8,14 +8,14 @@ import type {
 } from 'vscode';
 import { OverviewRulerLane, ThemeColor, Uri, window } from 'vscode';
 import type { Config } from '../config';
-import type { Colors } from '../constants';
 import { GlyphChars } from '../constants';
+import type { Colors } from '../constants.colors';
 import type { CommitFormatOptions } from '../git/formatters/commitFormatter';
 import { CommitFormatter } from '../git/formatters/commitFormatter';
 import type { GitCommit } from '../git/models/commit';
 import { scale, toRgba } from '../system/color';
-import { configuration } from '../system/configuration';
 import { getWidth, interpolate, pad } from '../system/string';
+import { configuration } from '../system/vscode/configuration';
 import type { BlameFontOptions } from './gutterBlameAnnotationProvider';
 
 export interface ComputedHeatmap {

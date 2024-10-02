@@ -2,8 +2,10 @@ import type { ConfigurationChangeEvent } from 'vscode';
 import { Disposable, env, Uri, window } from 'vscode';
 import { extractDraftMessage } from '../../../ai/aiProviderService';
 import { getAvatarUri } from '../../../avatars';
-import type { ContextKeys, Sources } from '../../../constants';
-import { Commands, GlyphChars, previewBadge } from '../../../constants';
+import { GlyphChars, previewBadge } from '../../../constants';
+import { Commands } from '../../../constants.commands';
+import type { ContextKeys } from '../../../constants.context';
+import type { Sources } from '../../../constants.telemetry';
 import type { Container } from '../../../container';
 import { CancellationError } from '../../../errors';
 import { openChanges, openChangesWithWorking, openFile } from '../../../git/actions/commit';
@@ -31,17 +33,17 @@ import type { GkRepositoryId } from '../../../gk/models/repositoryIdentities';
 import { showNewOrSelectBranchPicker } from '../../../quickpicks/branchPicker';
 import { showOrganizationMembersPicker } from '../../../quickpicks/organizationMembersPicker';
 import { ReferencesQuickPickIncludes, showReferencePicker } from '../../../quickpicks/referencePicker';
-import { executeCommand, registerCommand } from '../../../system/command';
-import { configuration } from '../../../system/configuration';
-import { getContext, onDidChangeContext, setContext } from '../../../system/context';
 import { gate } from '../../../system/decorators/gate';
 import { debug } from '../../../system/decorators/log';
 import type { Deferrable } from '../../../system/function';
 import { debounce } from '../../../system/function';
 import { find, some } from '../../../system/iterable';
 import { basename } from '../../../system/path';
-import type { Serialized } from '../../../system/serialize';
-import { serialize } from '../../../system/serialize';
+import { executeCommand, registerCommand } from '../../../system/vscode/command';
+import { configuration } from '../../../system/vscode/configuration';
+import { getContext, onDidChangeContext, setContext } from '../../../system/vscode/context';
+import type { Serialized } from '../../../system/vscode/serialize';
+import { serialize } from '../../../system/vscode/serialize';
 import { showInspectView } from '../../../webviews/commitDetails/actions';
 import type { IpcCallMessageType, IpcMessage } from '../../../webviews/protocol';
 import type { WebviewHost, WebviewProvider } from '../../../webviews/webviewProvider';
@@ -718,7 +720,7 @@ export class PatchDetailsWebviewProvider
 			this.closeView();
 		} catch (ex) {
 			debugger;
-
+			void this.notifyDidChangeCreateDraftState();
 			void window.showErrorMessage(`Unable to create draft: ${ex.message}`);
 		}
 	}
@@ -816,9 +818,11 @@ export class PatchDetailsWebviewProvider
 
 			const summary = await (
 				await this.container.ai
-			)?.explainCommit(commit, {
-				progress: { location: { viewId: this.host.id } },
-			});
+			)?.explainCommit(
+				commit,
+				{ source: 'patchDetails', type: `draft-${this._context.draft.type}` },
+				{ progress: { location: { viewId: this.host.id } } },
+			);
 			if (summary == null) throw new Error('Error retrieving content');
 
 			params = { summary: summary };
@@ -858,9 +862,11 @@ export class PatchDetailsWebviewProvider
 
 			const summary = await (
 				await this.container.ai
-			)?.generateDraftMessage(repo, {
-				progress: { location: { viewId: this.host.id } },
-			});
+			)?.generateDraftMessage(
+				repo,
+				{ source: 'patchDetails', type: 'patch' },
+				{ progress: { location: { viewId: this.host.id } } },
+			);
 			if (summary == null) throw new Error('Error retrieving content');
 
 			params = extractDraftMessage(summary);
@@ -1275,7 +1281,7 @@ export class PatchDetailsWebviewProvider
 			);
 
 			this._context.draftUserState = { users: users, selections: userSelections };
-		} catch (ex) {
+		} catch (_ex) {
 			debugger;
 		}
 	}

@@ -1,11 +1,11 @@
+import { getProxyAgent } from '@env/fetch';
+import { getPlatform } from '@env/platform';
 import type { AttributeValue, Span, TimeInput } from '@opentelemetry/api';
 import type { Disposable } from 'vscode';
 import { version as codeVersion, env } from 'vscode';
-import { getProxyAgent } from '@env/fetch';
-import { getPlatform } from '@env/platform';
-import type { Source, TelemetryEvents, TelemetryGlobalContext } from '../constants';
+import type { Source, TelemetryEventData, TelemetryEvents, TelemetryGlobalContext } from '../constants.telemetry';
 import type { Container } from '../container';
-import { configuration } from '../system/configuration';
+import { configuration } from '../system/vscode/configuration';
 
 export interface TelemetryContext {
 	env: string;
@@ -22,8 +22,6 @@ export interface TelemetryContext {
 	vscodeUIKind: string;
 	vscodeVersion: string;
 }
-
-export type TelemetryEventData = Record<string, AttributeValue | null | undefined>;
 
 export interface TelemetryProvider extends Disposable {
 	sendEvent(name: string, data?: Record<string, AttributeValue>, startTime?: TimeInput, endTime?: TimeInput): void;

@@ -1,15 +1,17 @@
-import type { CancellationToken, Disposable } from 'vscode';
+import type { CancellationToken, ConfigurationChangeEvent, Disposable } from 'vscode';
 import { ProgressLocation, TreeItem, TreeItemCollapsibleState, window } from 'vscode';
 import type { WorkspacesViewConfig } from '../config';
-import { Commands, previewBadge, urls } from '../constants';
+import { previewBadge, urls } from '../constants';
+import { Commands } from '../constants.commands';
 import type { Container } from '../container';
 import { unknownGitUri } from '../git/gitUri';
 import type { Repository } from '../git/models/repository';
 import { ensurePlusFeaturesEnabled } from '../plus/gk/utils';
-import { executeCommand } from '../system/command';
 import { gate } from '../system/decorators/gate';
 import { debug } from '../system/decorators/log';
-import { openUrl, openWorkspace } from '../system/utils';
+import { executeCommand } from '../system/vscode/command';
+import { configuration } from '../system/vscode/configuration';
+import { openUrl, openWorkspace } from '../system/vscode/utils';
 import { ViewNode } from './nodes/abstract/viewNode';
 import { MessageNode } from './nodes/common';
 import { RepositoriesNode } from './nodes/repositoriesNode';
@@ -19,9 +21,9 @@ import { WorkspaceNode } from './nodes/workspaceNode';
 import { disposeChildren, ViewBase } from './viewBase';
 import { registerViewCommand } from './viewCommands';
 
-export class WorkspacesViewNode extends ViewNode<'workspaces-view', WorkspacesView> {
+export class WorkspacesViewNode extends ViewNode<'workspaces', WorkspacesView> {
 	constructor(view: WorkspacesView) {
-		super('workspaces-view', unknownGitUri, view);
+		super('workspaces', unknownGitUri, view);
 	}
 
 	private _children: (WorkspaceNode | MessageNode | RepositoriesNode)[] | undefined;
@@ -130,7 +132,7 @@ export class WorkspacesView extends ViewBase<'workspaces', WorkspacesViewNode, W
 				title: `Revealing workspace ${workspaceId} in the side bar...`,
 				cancellable: true,
 			},
-			async (progress, token) => {
+			async (_progress, token) => {
 				const node = await this.findWorkspaceNode(workspaceId, token);
 				if (node == null) return undefined;
 
@@ -311,5 +313,27 @@ export class WorkspacesView extends ViewBase<'workspaces', WorkspacesViewNode, W
 				},
 			),
 		];
+	}
+
+	protected override filterConfigurationChanged(e: ConfigurationChangeEvent) {
+		const changed = super.filterConfigurationChanged(e);
+		if (
+			!changed &&
+			!configuration.changed(e, 'defaultDateFormat') &&
+			!configuration.changed(e, 'defaultDateLocale') &&
+			!configuration.changed(e, 'defaultDateShortFormat') &&
+			!configuration.changed(e, 'defaultDateSource') &&
+			!configuration.changed(e, 'defaultDateStyle') &&
+			!configuration.changed(e, 'defaultGravatarsStyle') &&
+			!configuration.changed(e, 'defaultTimeFormat') &&
+			!configuration.changed(e, 'sortBranchesBy') &&
+			!configuration.changed(e, 'sortContributorsBy') &&
+			!configuration.changed(e, 'sortTagsBy') &&
+			!configuration.changed(e, 'sortRepositoriesBy')
+		) {
+			return false;
+		}
+
+		return true;
 	}
 }

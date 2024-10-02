@@ -1,10 +1,10 @@
+import { hrtime } from '@env/hrtime';
 import type {
 	WidthOptions as StringWidthOptions,
 	TruncationOptions as StringWidthTruncationOptions,
 	Result as TruncatedStringWidthResult,
-} from 'fast-string-truncated-width';
-import getTruncatedStringWidth from 'fast-string-truncated-width';
-import { hrtime } from '@env/hrtime';
+} from '@gk-nzaytsev/fast-string-truncated-width';
+import getTruncatedStringWidth from '@gk-nzaytsev/fast-string-truncated-width';
 import { CharCode } from '../constants';
 
 export { fromBase64, base64 } from '@env/base64';
@@ -128,38 +128,6 @@ export function encodeHtmlWeak(s: string | undefined): string | undefined {
 				return c;
 		}
 	});
-}
-
-const escapeMarkdownRegex = /[\\`*_{}[\]()#+\-.!]/g;
-const unescapeMarkdownRegex = /\\([\\`*_{}[\]()#+\-.!])/g;
-
-const escapeMarkdownHeaderRegex = /^===/gm;
-const unescapeMarkdownHeaderRegex = /^\u200b===/gm;
-
-// const sampleMarkdown = '## message `not code` *not important* _no underline_ \n> don\'t quote me \n- don\'t list me \n+ don\'t list me \n1. don\'t list me \nnot h1 \n=== \nnot h2 \n---\n***\n---\n___';
-const markdownQuotedRegex = /\r?\n/g;
-
-export function escapeMarkdown(s: string, options: { quoted?: boolean } = {}): string {
-	s = s
-		// Escape markdown
-		.replace(escapeMarkdownRegex, '\\$&')
-		// Escape markdown header (since the above regex won't match it)
-		.replace(escapeMarkdownHeaderRegex, '\u200b===');
-
-	if (!options.quoted) return s;
-
-	// Keep under the same block-quote but with line breaks
-	return s.trim().replace(markdownQuotedRegex, '\t\\\n>  ');
-}
-
-export function unescapeMarkdown(s: string): string {
-	return (
-		s
-			// Unescape markdown
-			.replace(unescapeMarkdownRegex, '$1')
-			// Unescape markdown header
-			.replace(unescapeMarkdownHeaderRegex, '===')
-	);
 }
 
 export function escapeRegex(s: string) {
@@ -501,6 +469,12 @@ export function pad(s: string, before: number = 0, after: number = 0, padding: s
 	return `${before === 0 ? '' : padding.repeat(before)}${s}${after === 0 ? '' : padding.repeat(after)}`;
 }
 
+export function padOrTruncateEnd(s: string, maxLength: number, fillString?: string) {
+	if (s.length === maxLength) return s;
+	if (s.length > maxLength) return s.substring(0, maxLength);
+	return s.padEnd(maxLength, fillString);
+}
+
 export function pluralize(
 	s: string,
 	count: number,
@@ -538,7 +512,7 @@ export function splitLast(s: string, splitter: string) {
 	const index = s.lastIndexOf(splitter);
 	if (index === -1) return [s];
 
-	return [s.substr(index), s.substring(0, index - 1)];
+	return [s.substring(index), s.substring(0, index - 1)];
 }
 
 export function splitSingle(s: string, splitter: string) {

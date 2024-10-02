@@ -1,14 +1,15 @@
 import type { Command } from 'vscode';
 import { TreeItem, TreeItemCheckboxState, TreeItemCollapsibleState } from 'vscode';
 import type { DiffWithCommandArgs } from '../../commands/diffWith';
-import { Commands } from '../../constants';
+import { Commands } from '../../constants.commands';
 import { StatusFileFormatter } from '../../git/formatters/statusFormatter';
 import { GitUri } from '../../git/gitUri';
 import type { GitFile } from '../../git/models/file';
 import { getGitFileStatusIcon } from '../../git/models/file';
 import type { GitRevisionReference } from '../../git/models/reference';
 import { createReference } from '../../git/models/reference';
-import { joinPaths, relativeDir } from '../../system/path';
+import { joinPaths } from '../../system/path';
+import { relativeDir } from '../../system/vscode/path';
 import type { View } from '../viewBase';
 import type { ViewNode } from './abstract/viewNode';
 import { ContextValues, getViewNodeId } from './abstract/viewNode';

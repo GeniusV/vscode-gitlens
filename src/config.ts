@@ -1,6 +1,4 @@
-import type { VSCodeAIModels } from './ai/vscodeProvider';
-import type { SupportedAIModels } from './constants';
-import type { ResourceDescriptor } from './plus/integrations/integration';
+import type { SupportedAIModels, VSCodeAIModels } from './constants.ai';
 import type { DateTimeFormat } from './system/date';
 import type { LogLevel } from './system/logger.constants';
 
@@ -19,7 +17,7 @@ export interface Config {
 			};
 		};
 	};
-	readonly autolinks: AutolinkReference[] | null;
+	readonly autolinks: AutolinkConfig[] | null;
 	readonly blame: {
 		readonly avatars: boolean;
 		readonly compact: boolean;
@@ -44,6 +42,9 @@ export interface Config {
 	readonly changes: {
 		readonly locations: ChangesLocations[];
 		/*readonly*/ toggleMode: AnnotationsToggleMode;
+	};
+	readonly cloudIntegrations: {
+		readonly enabled: boolean;
 	};
 	readonly cloudPatches: {
 		readonly enabled: boolean;
@@ -90,14 +91,14 @@ export interface Config {
 	};
 	readonly launchpad: {
 		readonly allowMultiple: boolean;
+		readonly includedOrganizations: string[];
 		readonly ignoredOrganizations: string[];
 		readonly ignoredRepositories: string[];
 		readonly staleThreshold: number | null;
 		readonly indicator: {
 			readonly enabled: boolean;
-			readonly openInEditor: boolean;
 			readonly icon: 'default' | 'group';
-			readonly label: false | 'item';
+			readonly label: false | 'item' | 'counts';
 			readonly useColors: boolean;
 			readonly groups: ('mergeable' | 'blocked' | 'needs-review' | 'follow-up')[];
 			readonly polling: {
@@ -107,7 +108,6 @@ export interface Config {
 		};
 		readonly experimental: {
 			readonly queryLimit: number;
-			readonly queryUseInvolvesFilter: boolean;
 		};
 	};
 	readonly gitCommands: {
@@ -251,18 +251,17 @@ export interface Config {
 }
 
 export type AnnotationsToggleMode = 'file' | 'window';
-export type AutolinkType = 'issue' | 'pullrequest';
 
-export interface AutolinkReference {
+export interface AutolinkConfig {
+	/** Short prefix to match to generate autolinks for the external resource */
 	readonly prefix: string;
+	/** URL of the external resource to link to */
 	readonly url: string;
-	readonly title?: string;
-	readonly alphanumeric?: boolean;
-	readonly ignoreCase?: boolean;
-
-	readonly type?: AutolinkType;
-	readonly description?: string;
-	readonly descriptor?: ResourceDescriptor;
+	/** Whether alphanumeric characters should be allowed in `<num>` */
+	readonly alphanumeric: boolean;
+	/** Whether case should be ignored when matching the prefix */
+	readonly ignoreCase: boolean;
+	readonly title: string | null;
 }
 
 export type BlameHighlightLocations = 'gutter' | 'line' | 'overview';
@@ -305,8 +304,19 @@ export type DateSource = 'authored' | 'committed';
 export type DateStyle = 'absolute' | 'relative';
 export type FileAnnotationType = 'blame' | 'changes' | 'heatmap';
 export type GitCommandSorting = 'name' | 'usage';
-export type GraphScrollMarkersAdditionalTypes = 'localBranches' | 'remoteBranches' | 'stashes' | 'tags';
-export type GraphMinimapMarkersAdditionalTypes = 'localBranches' | 'remoteBranches' | 'stashes' | 'tags';
+export type GraphBranchesVisibility = 'all' | 'smart' | 'current';
+export type GraphScrollMarkersAdditionalTypes =
+	| 'localBranches'
+	| 'remoteBranches'
+	| 'stashes'
+	| 'tags'
+	| 'pullRequests';
+export type GraphMinimapMarkersAdditionalTypes =
+	| 'localBranches'
+	| 'remoteBranches'
+	| 'stashes'
+	| 'tags'
+	| 'pullRequests';
 export type GravatarDefaultStyle = 'wavatar' | 'identicon' | 'monsterid' | 'mp' | 'retro' | 'robohash';
 export type HeatmapLocations = 'gutter' | 'line' | 'overview';
 export type KeyMap = 'alternate' | 'chorded' | 'none';
@@ -373,6 +383,7 @@ export interface AdvancedConfig {
 export interface GraphConfig {
 	readonly allowMultiple: boolean;
 	readonly avatars: boolean;
+	readonly branchesVisibility: GraphBranchesVisibility;
 	readonly commitOrdering: 'date' | 'author-date' | 'topo';
 	readonly dateFormat: DateTimeFormat | string | null;
 	readonly dateStyle: DateStyle | null;
@@ -400,6 +411,9 @@ export interface GraphConfig {
 	readonly showGhostRefsOnRowHover: boolean;
 	readonly showRemoteNames: boolean;
 	readonly showUpstreamStatus: boolean;
+	readonly sidebar: {
+		readonly enabled: boolean;
+	};
 	readonly statusBar: {
 		readonly enabled: boolean;
 	};
@@ -573,6 +587,9 @@ export type SuppressedMessages =
 	| 'suppressLineUncommittedWarning'
 	| 'suppressNoRepositoryWarning'
 	| 'suppressRebaseSwitchToTextWarning'
+	| 'suppressGkDisconnectedTooManyFailedRequestsWarningMessage'
+	| 'suppressGkRequestFailed500Warning'
+	| 'suppressGkRequestTimedOutWarning'
 	| 'suppressIntegrationDisconnectedTooManyFailedRequestsWarning'
 	| 'suppressIntegrationRequestFailed500Warning'
 	| 'suppressIntegrationRequestTimedOutWarning'
@@ -596,17 +613,21 @@ export interface ViewsCommonConfig {
 		readonly stashes: {
 			readonly label: string;
 			readonly description: string;
+			readonly tooltip: string;
 		};
 	};
 	readonly openChangesInMultiDiffEditor: boolean;
 	readonly pageItemLimit: number;
+	readonly showCurrentBranchOnTop: boolean;
 	readonly showRelativeDateMarkers: boolean;
 }
 
 export const viewsCommonConfigKeys: (keyof ViewsCommonConfig)[] = [
+	'collapseWorktreesWhenPossible',
 	'defaultItemLimit',
 	'formats',
 	'pageItemLimit',
+	'showCurrentBranchOnTop',
 	'showRelativeDateMarkers',
 ];
 
@@ -617,6 +638,7 @@ interface ViewsConfigs {
 	readonly contributors: ContributorsViewConfig;
 	readonly drafts: DraftsViewConfig;
 	readonly fileHistory: FileHistoryViewConfig;
+	readonly launchpad: LaunchpadViewConfig;
 	readonly lineHistory: LineHistoryViewConfig;
 	readonly patchDetails: PatchDetailsViewConfig;
 	readonly pullRequest: PullRequestViewConfig;
@@ -717,6 +739,17 @@ export interface DraftsViewConfig {
 }
 
 export interface FileHistoryViewConfig {
+	readonly avatars: boolean;
+	readonly files: ViewsFilesConfig;
+	readonly pullRequests: {
+		readonly enabled: boolean;
+		readonly showForCommits: boolean;
+	};
+}
+
+export interface LaunchpadViewConfig {
+	readonly enabled: boolean;
+
 	readonly avatars: boolean;
 	readonly files: ViewsFilesConfig;
 	readonly pullRequests: {

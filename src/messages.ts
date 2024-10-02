@@ -1,14 +1,15 @@
 import type { MessageItem } from 'vscode';
 import { ConfigurationTarget, window } from 'vscode';
 import type { SuppressedMessages } from './config';
-import { Commands, urls } from './constants';
+import { urls } from './constants';
+import { Commands } from './constants.commands';
 import type { BlameIgnoreRevsFileError } from './git/errors';
 import { BlameIgnoreRevsFileBadRevisionError } from './git/errors';
 import type { GitCommit } from './git/models/commit';
-import { executeCommand } from './system/command';
-import { configuration } from './system/configuration';
 import { Logger } from './system/logger';
-import { openUrl } from './system/utils';
+import { executeCommand } from './system/vscode/command';
+import { configuration } from './system/vscode/configuration';
+import { openUrl } from './system/vscode/utils';
 
 export function showBlameInvalidIgnoreRevsFileWarningMessage(
 	ex: BlameIgnoreRevsFileError | BlameIgnoreRevsFileBadRevisionError,
@@ -157,6 +158,30 @@ export function showRebaseSwitchToTextWarningMessage(): Promise<MessageItem | un
 		'Closing either the git-rebase-todo file or the Rebase Editor will start the rebase.',
 		'suppressRebaseSwitchToTextWarning',
 	);
+}
+
+export function showGkDisconnectedTooManyFailedRequestsWarningMessage(): Promise<MessageItem | undefined> {
+	return showMessage(
+		'error',
+		`Requests to GitKraken have stopped being sent for this session, because of too many failed requests.`,
+		'suppressGkDisconnectedTooManyFailedRequestsWarningMessage',
+		undefined,
+		{
+			title: 'OK',
+		},
+	);
+}
+
+export function showGkRequestFailed500WarningMessage(message: string): Promise<MessageItem | undefined> {
+	return showMessage('error', message, 'suppressGkRequestFailed500Warning', undefined, {
+		title: 'OK',
+	});
+}
+
+export function showGkRequestTimedOutWarningMessage(): Promise<MessageItem | undefined> {
+	return showMessage('error', `GitKraken request timed out.`, 'suppressGkRequestTimedOutWarning', undefined, {
+		title: 'OK',
+	});
 }
 
 export function showIntegrationDisconnectedTooManyFailedRequestsWarningMessage(

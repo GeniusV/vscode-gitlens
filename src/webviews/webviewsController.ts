@@ -1,3 +1,4 @@
+import { uuid } from '@env/crypto';
 import type {
 	CancellationToken,
 	WebviewOptions,
@@ -7,16 +8,16 @@ import type {
 	WebviewViewResolveContext,
 } from 'vscode';
 import { Disposable, Uri, ViewColumn, window } from 'vscode';
-import { uuid } from '@env/crypto';
-import type { Commands, WebviewIds, WebviewTypes, WebviewViewIds, WebviewViewTypes } from '../constants';
+import type { Commands } from '../constants.commands';
+import type { TrackedUsageFeatures } from '../constants.telemetry';
+import type { WebviewIds, WebviewTypes, WebviewViewIds, WebviewViewTypes } from '../constants.views';
 import type { Container } from '../container';
 import { ensurePlusFeaturesEnabled } from '../plus/gk/utils';
-import { executeCoreCommand, registerCommand } from '../system/command';
 import { debug } from '../system/decorators/log';
 import { find, first, map } from '../system/iterable';
 import { Logger } from '../system/logger';
-import { getNewLogScope } from '../system/logger.scope';
-import type { TrackedUsageFeatures } from '../telemetry/usageTracker';
+import { startLogScope } from '../system/logger.scope';
+import { executeCoreCommand, registerCommand } from '../system/vscode/command';
 import { WebviewCommandRegistrar } from './webviewCommandRegistrar';
 import { WebviewController } from './webviewController';
 import type { WebviewHost, WebviewProvider, WebviewShowingArgs } from './webviewProvider';
@@ -131,7 +132,7 @@ export class WebviewsController implements Disposable {
 		) => Promise<WebviewProvider<State, SerializedState, ShowingArgs>>,
 		onBeforeShow?: (...args: WebviewShowingArgs<ShowingArgs, SerializedState>) => void | Promise<void>,
 	): WebviewViewProxy<ShowingArgs, SerializedState> {
-		const scope = getNewLogScope(`WebviewView(${descriptor.id})`);
+		using scope = startLogScope(`WebviewView(${descriptor.id})`, false);
 
 		const registration: WebviewViewRegistration<State, SerializedState, ShowingArgs> = { descriptor: descriptor };
 		this._views.set(descriptor.id, registration);
@@ -255,7 +256,7 @@ export class WebviewsController implements Disposable {
 			host: WebviewHost,
 		) => Promise<WebviewProvider<State, SerializedState, ShowingArgs>>,
 	): WebviewPanelsProxy<ShowingArgs, SerializedState> {
-		const scope = getNewLogScope(`WebviewPanel(${descriptor.id})`);
+		using scope = startLogScope(`WebviewPanel(${descriptor.id})`, false);
 
 		const registration: WebviewPanelRegistration<State, SerializedState, ShowingArgs> = { descriptor: descriptor };
 		this._panels.set(descriptor.id, registration);

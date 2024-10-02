@@ -1,25 +1,30 @@
-import { MarkdownString, ThemeColor, ThemeIcon, TreeItem, TreeItemCollapsibleState, Uri, window } from 'vscode';
+import { MarkdownString, ThemeColor, ThemeIcon, TreeItem, TreeItemCollapsibleState, window } from 'vscode';
 import type { ViewShowBranchComparison } from '../../config';
-import type { Colors, StoredBranchComparison } from '../../constants';
 import { GlyphChars } from '../../constants';
+import type { Colors } from '../../constants.colors';
 import type { GitUri } from '../../git/gitUri';
 import type { GitBranch } from '../../git/models/branch';
+import { getTargetBranchName } from '../../git/models/branch';
 import type { GitLog } from '../../git/models/log';
 import type { PullRequest, PullRequestState } from '../../git/models/pullRequest';
 import type { GitBranchReference } from '../../git/models/reference';
-import { shortenRevision } from '../../git/models/reference';
 import { getHighlanderProviders } from '../../git/models/remote';
 import type { Repository } from '../../git/models/repository';
 import type { GitUser } from '../../git/models/user';
-import { getContext } from '../../system/context';
+import type { GitWorktree } from '../../git/models/worktree';
+import { getBranchIconPath } from '../../git/utils/branch-utils';
+import { getWorktreeBranchIconPath } from '../../git/utils/worktree-utils';
 import { gate } from '../../system/decorators/gate';
 import { log } from '../../system/decorators/log';
+import { memoize } from '../../system/decorators/memoize';
 import { map } from '../../system/iterable';
 import type { Deferred } from '../../system/promise';
 import { defer, getSettledValue } from '../../system/promise';
 import { pad } from '../../system/string';
+import { getContext } from '../../system/vscode/context';
 import type { ViewsWithBranches } from '../viewBase';
 import { disposeChildren } from '../viewBase';
+import { createViewDecorationUri } from '../viewDecorationProvider';
 import type { PageableViewNode, ViewNode } from './abstract/viewNode';
 import { ContextValues, getViewNodeId } from './abstract/viewNode';
 import { ViewRefNode } from './abstract/viewRefNode';
@@ -42,7 +47,7 @@ type Options = {
 	limitCommits: boolean;
 	showAsCommits: boolean;
 	showComparison: false | ViewShowBranchComparison;
-	showCurrentOrOpened: boolean;
+	showStatusDecorationOnly: boolean;
 	showMergeCommits?: boolean;
 	showStatus: boolean;
 	showTracking: boolean;
@@ -79,8 +84,8 @@ export class BranchNode
 			limitCommits: false,
 			showAsCommits: false,
 			showComparison: false,
-			// Hide the current branch checkmark when the node is displayed as a root
-			showCurrentOrOpened: !this.root,
+			// Only show status decorations when the node is displayed as a root
+			showStatusDecorationOnly: this.root,
 			// Don't show merge/rebase status info the node is displayed as a root
 			showStatus: true, //!this.root,
 			// Don't show tracking info the node is displayed as a root
@@ -102,14 +107,14 @@ export class BranchNode
 		return this.branch.name;
 	}
 
+	private get avoidCompacting(): boolean {
+		return this.root || this.current || this.worktree?.opened || this.branch.detached || this.branch.starred;
+	}
+
 	compacted: boolean = false;
 
 	get current(): boolean {
 		return this.branch.current;
-	}
-
-	get opened(): boolean {
-		return this.context.openWorktreeBranches?.has(this.branch.name) ?? false;
 	}
 
 	get label(): string {
@@ -117,13 +122,7 @@ export class BranchNode
 
 		const branchName = this.branch.getNameWithoutRemote();
 		return `${
-			this.view.config.branches?.layout !== 'tree' ||
-			this.compacted ||
-			this.root ||
-			this.current ||
-			this.opened ||
-			this.branch.detached ||
-			this.branch.starred
+			this.view.config.branches?.layout !== 'tree' || this.compacted || this.avoidCompacting
 				? branchName
 				: this.branch.getBasename()
 		}${this.branch.rebasing ? ' (Rebasing)' : ''}`;
@@ -134,9 +133,13 @@ export class BranchNode
 	}
 
 	get treeHierarchy(): string[] {
-		return this.root || this.current || this.opened || this.branch.detached || this.branch.starred
-			? [this.branch.name]
-			: this.branch.getNameWithoutRemote().split('/');
+		return this.avoidCompacting ? [this.branch.name] : this.branch.getNameWithoutRemote().split('/');
+	}
+
+	@memoize()
+	get worktree(): GitWorktree | undefined {
+		const worktree = this.context.worktreesByBranch?.get(this.branch.id);
+		return worktree?.isDefault ? undefined : worktree;
 	}
 
 	private _children: ViewNode[] | undefined;
@@ -158,18 +161,21 @@ export class BranchNode
 			let pullRequest;
 			let pullRequestInsertIndex = 0;
 
-			function getPullRequestComparison(pr: PullRequest | null | undefined): StoredBranchComparison | undefined {
-				if (pr?.refs?.base == null && pr?.refs?.head == null) return undefined;
-
-				return {
-					ref: pr.refs.base.sha,
-					label: `${pr.refs.base.branch} (${shortenRevision(pr.refs.base.sha)})`,
-					notation: '...',
-					type: 'branch',
-					checkedFiles: [],
-				};
+			let comparison: CompareBranchNode | undefined;
+			let loadComparisonDefaultCompareWith = false;
+			if (this.options.showComparison !== false && this.view.type !== 'remotes') {
+				comparison = new CompareBranchNode(
+					this.uri,
+					this.view,
+					this,
+					branch,
+					this.options.showComparison,
+					this.splatted,
+				);
+				loadComparisonDefaultCompareWith = comparison.compareWith == null;
 			}
 
+			let prPromise: Promise<PullRequest | undefined> | undefined;
 			if (
 				this.view.config.pullRequests.enabled &&
 				this.view.config.pullRequests.showForBranches &&
@@ -179,7 +185,7 @@ export class BranchNode
 				pullRequest = this.getState('pullRequest');
 				if (pullRequest === undefined && this.getState('pendingPullRequest') === undefined) {
 					onCompleted = defer<void>();
-					const prPromise = this.getAssociatedPullRequest(
+					prPromise = this.getAssociatedPullRequest(
 						branch,
 						this.root ? { include: ['opened', 'merged'] } : undefined,
 					);
@@ -204,18 +210,6 @@ export class BranchNode
 								0,
 								new PullRequestNode(this.view, this, pr, branch),
 							);
-
-							if (pr?.refs?.base != null && pr?.refs?.head != null) {
-								const comparisonNode = this.children.find((n): n is CompareBranchNode =>
-									n.is('compare-branch'),
-								);
-								if (comparisonNode != null) {
-									const comparison = getPullRequestComparison(pr);
-									if (comparison != null) {
-										await comparisonNode.setDefaultCompareWith(comparison);
-									}
-								}
-							}
 						}
 
 						// Refresh this node to add the pull request node or remove the spinner
@@ -233,11 +227,13 @@ export class BranchNode
 				mergeStatusResult,
 				rebaseStatusResult,
 				unpublishedCommitsResult,
+				baseResult,
+				targetResult,
 			] = await Promise.allSettled([
 				this.getLog(),
 				this.view.container.git.getBranchesAndTagsTipsFn(this.uri.repoPath, branch.name),
 				this.options.showStatus && branch.current
-					? this.view.container.git.getStatusForRepo(this.uri.repoPath)
+					? this.view.container.git.getStatus(this.uri.repoPath)
 					: undefined,
 				this.options.showStatus && branch.current
 					? this.view.container.git.getMergeStatus(this.uri.repoPath!)
@@ -253,6 +249,15 @@ export class BranchNode
 								  })
 								: undefined,
 					  )
+					: undefined,
+				loadComparisonDefaultCompareWith
+					? this.view.container.git.getBaseBranchName(this.branch.repoPath, this.branch.name)
+					: undefined,
+				loadComparisonDefaultCompareWith
+					? getTargetBranchName(this.view.container, this.branch, {
+							associatedPullRequest: prPromise,
+							timeout: 100,
+					  })
 					: undefined,
 			]);
 			const log = getSettledValue(logResult);
@@ -276,7 +281,7 @@ export class BranchNode
 						this,
 						branch,
 						mergeStatus,
-						status ?? (await this.view.container.git.getStatusForRepo(this.uri.repoPath)),
+						status ?? (await this.view.container.git.getStatus(this.uri.repoPath)),
 						this.root,
 					),
 				);
@@ -291,7 +296,7 @@ export class BranchNode
 						this,
 						branch,
 						rebaseStatus,
-						status ?? (await this.view.container.git.getStatusForRepo(this.uri.repoPath)),
+						status ?? (await this.view.container.git.getStatus(this.uri.repoPath)),
 						this.root,
 					),
 				);
@@ -330,20 +335,46 @@ export class BranchNode
 				}
 			}
 
-			pullRequestInsertIndex = 0; //children.length;
+			pullRequestInsertIndex = 0;
 
-			if (this.options.showComparison !== false && this.view.type !== 'remotes') {
-				children.push(
-					new CompareBranchNode(
-						this.uri,
-						this.view,
-						this,
-						branch,
-						this.options.showComparison,
-						this.splatted,
-						getPullRequestComparison(pullRequest),
-					),
-				);
+			if (comparison != null) {
+				children.push(comparison);
+
+				if (loadComparisonDefaultCompareWith) {
+					const baseBranchName = getSettledValue(baseResult);
+					const targetMaybeResult = getSettledValue(targetResult);
+
+					let baseOrTargetBranchName: string | undefined;
+					if (targetMaybeResult?.paused) {
+						baseOrTargetBranchName = baseBranchName;
+					} else {
+						baseOrTargetBranchName = targetMaybeResult?.value ?? baseBranchName;
+					}
+
+					if (baseOrTargetBranchName != null) {
+						void comparison.setDefaultCompareWith({
+							ref: baseOrTargetBranchName,
+							label: baseOrTargetBranchName,
+							notation: '...',
+							type: 'branch',
+							checkedFiles: [],
+						});
+					}
+
+					if (targetMaybeResult?.paused) {
+						void targetMaybeResult.value.then(target => {
+							if (target == null) return;
+
+							void comparison.setDefaultCompareWith({
+								ref: target,
+								label: target,
+								notation: '...',
+								type: 'branch',
+								checkedFiles: [],
+							});
+						});
+					}
+				}
 			}
 
 			if (children.length !== 0) {
@@ -388,9 +419,27 @@ export class BranchNode
 	async getTreeItem(): Promise<TreeItem> {
 		this.splatted = false;
 
-		let tooltip: string | MarkdownString = `${
-			this.current ? 'Current branch\\\n' : this.opened ? 'Current branch in an opened worktree\\\n' : ''
-		}\`${this.branch.getNameWithoutRemote()}\`${this.branch.rebasing ? ' (Rebasing)' : ''}`;
+		const worktree = this.worktree;
+		const status = this.branch.status;
+
+		const suffixes = [];
+		if (this.current) {
+			if (this.branch.rebasing) {
+				suffixes.push('rebasing');
+			}
+			suffixes.push('current branch');
+		}
+		if (worktree) {
+			if (worktree.opened && !this.current) {
+				suffixes.push('in an opened worktree');
+			} else {
+				suffixes.push('in a worktree');
+			}
+		}
+
+		let tooltip: string | MarkdownString = `$(git-branch) \`${this.branch.getNameWithoutRemote()}\`${
+			suffixes.length ? ` \u00a0(_${suffixes.join(', ')}_)` : ''
+		}`;
 
 		let contextValue: string = ContextValues.Branch;
 		if (this.current) {
@@ -408,6 +457,11 @@ export class BranchNode
 		if (this.options.showAsCommits) {
 			contextValue += '+commits';
 		}
+		if (worktree != null) {
+			contextValue += '+worktree';
+		} else if (this.context.worktreesByBranch?.get(this.branch.id)?.isDefault) {
+			contextValue += '+checkedout';
+		}
 		// TODO@axosoft-ramint Temporary workaround, remove when our git commands work on closed repos.
 		if (this.repo.closed) {
 			contextValue += '+closed';
@@ -415,7 +469,6 @@ export class BranchNode
 
 		let iconColor: ThemeColor | undefined;
 		let description;
-		let iconSuffix = '';
 		if (!this.branch.remote) {
 			if (this.branch.upstream != null) {
 				let arrows = GlyphChars.Dash;
@@ -461,40 +514,40 @@ export class BranchNode
 							GlyphChars.Space
 					  } ${this.branch.upstream.name}`;
 
-				tooltip += ` is ${this.branch.getTrackingStatus({
-					empty: this.branch.upstream.missing
-						? `missing upstream \`${this.branch.upstream.name}\``
-						: `up to date with \`${this.branch.upstream.name}\`${
-								remote?.provider?.name ? ` on ${remote.provider.name}` : ''
-						  }`,
+				tooltip += `\n\nBranch is ${this.branch.getTrackingStatus({
+					empty: `${
+						this.branch.upstream.missing ? 'missing upstream' : 'up to date with'
+					} \\\n $(git-branch) \`${this.branch.upstream.name}\`${
+						remote?.provider?.name ? ` on ${remote.provider.name}` : ''
+					}`,
 					expand: true,
 					icons: true,
-					separator: ' and ',
-					suffix: ` \`${this.branch.upstream.name}\`${
+					separator: ', ',
+					suffix: `\\\n$(git-branch) \`${this.branch.upstream.name}\`${
 						remote?.provider?.name ? ` on ${remote.provider.name}` : ''
 					}`,
 				})}`;
 
-				if (this.branch.state.ahead || this.branch.state.behind) {
-					if (this.branch.state.ahead) {
+				switch (status) {
+					case 'ahead':
 						contextValue += '+ahead';
 						iconColor = new ThemeColor('gitlens.decorations.branchAheadForegroundColor' satisfies Colors);
-						iconSuffix = '-green';
-					}
-					if (this.branch.state.behind) {
+						break;
+					case 'behind':
 						contextValue += '+behind';
-						if (this.branch.state.ahead) {
-							iconColor = new ThemeColor(
-								'gitlens.decorations.branchDivergedForegroundColor' satisfies Colors,
-							);
-							iconSuffix = '-yellow';
-						} else {
-							iconColor = new ThemeColor(
-								'gitlens.decorations.branchBehindForegroundColor' satisfies Colors,
-							);
-							iconSuffix = '-red';
-						}
-					}
+						iconColor = new ThemeColor('gitlens.decorations.branchBehindForegroundColor' satisfies Colors);
+						break;
+					case 'diverged':
+						contextValue += '+ahead+behind';
+						iconColor = new ThemeColor(
+							'gitlens.decorations.branchDivergedForegroundColor' satisfies Colors,
+						);
+						break;
+					case 'upToDate':
+						iconColor = new ThemeColor(
+							'gitlens.decorations.branchUpToDateForegroundColor' satisfies Colors,
+						);
+						break;
 				}
 			} else {
 				const providers = getHighlanderProviders(
@@ -502,7 +555,7 @@ export class BranchNode
 				);
 				const providerName = providers?.length ? providers[0].name : undefined;
 
-				tooltip += ` hasn't been published to ${providerName ?? 'a remote'}`;
+				tooltip += `\n\nLocal branch, hasn't been published to ${providerName ?? 'a remote'}`;
 			}
 		}
 
@@ -541,26 +594,27 @@ export class BranchNode
 				? new ThemeIcon('loading~spin')
 				: this.options.showAsCommits
 				  ? new ThemeIcon('git-commit', iconColor)
-				  : {
-							dark: this.view.container.context.asAbsolutePath(
-								`images/dark/icon-branch${iconSuffix}.svg`,
-							),
-							light: this.view.container.context.asAbsolutePath(
-								`images/light/icon-branch${iconSuffix}.svg`,
-							),
-				    };
+				  : worktree != null
+				    ? getWorktreeBranchIconPath(this.view.container, this.branch)
+				    : getBranchIconPath(this.view.container, this.branch);
 		item.tooltip = tooltip;
 
-		const query = new URLSearchParams();
-		query.set('status', await this.branch.getStatus());
-		if (this.options.showCurrentOrOpened) {
-			if (this.current) {
-				query.set('current', 'true');
-			} else if (this.opened) {
-				query.set('opened', 'true');
+		let localUnpublished = false;
+		if (status === 'local') {
+			// If there are any remotes then say this is unpublished, otherwise local
+			const remotes = await this.view.container.git.getRemotes(this.repoPath);
+			if (remotes.length) {
+				localUnpublished = true;
 			}
 		}
-		item.resourceUri = Uri.parse(`gitlens-view://branch?${query.toString()}`);
+
+		item.resourceUri = createViewDecorationUri('branch', {
+			status: localUnpublished ? 'unpublished' : status,
+			current: this.current,
+			worktree: worktree != null ? { opened: worktree.opened } : undefined,
+			starred: this.branch.starred,
+			showStatusOnly: this.options.showStatusDecorationOnly,
+		});
 
 		return item;
 	}

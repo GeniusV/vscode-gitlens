@@ -1,5 +1,5 @@
 import { MarkdownString, ThemeColor, ThemeIcon, TreeItem, TreeItemCollapsibleState, window } from 'vscode';
-import type { Colors } from '../../constants';
+import type { Colors } from '../../constants.colors';
 import type { FilesComparison } from '../../git/actions/commit';
 import { GitUri } from '../../git/gitUri';
 import type { GitBranch, GitTrackingState } from '../../git/models/branch';
@@ -183,19 +183,23 @@ export class BranchTrackingStatusNode
 		}
 
 		function getBranchStatus(this: BranchTrackingStatusNode, remote: GitRemote | undefined) {
-			return `\`${this.branch.name}\` is ${getUpstreamStatus(this.status.upstream, this.status.state, {
-				empty: this.status.upstream!.missing
-					? `missing upstream \`${this.status.upstream!.name}\``
-					: `up to date with \`${this.status.upstream!.name}\`${
-							remote?.provider?.name ? ` on ${remote.provider.name}` : ''
-					  }`,
-				expand: true,
-				icons: true,
-				separator: ' and ',
-				suffix: ` \`${this.status.upstream!.name}\`${
-					remote?.provider?.name ? ` on ${remote.provider.name}` : ''
-				}`,
-			})}`;
+			return `$(git-branch) \`${this.branch.name}\` is ${getUpstreamStatus(
+				this.status.upstream,
+				this.status.state,
+				{
+					empty: this.status.upstream!.missing
+						? `missing upstream $(git-branch) \`${this.status.upstream!.name}\``
+						: `up to date with $(git-branch) \`${this.status.upstream!.name}\`${
+								remote?.provider?.name ? ` on ${remote.provider.name}` : ''
+						  }`,
+					expand: true,
+					icons: true,
+					separator: ', ',
+					suffix: ` $(git-branch) \`${this.status.upstream!.name}\`${
+						remote?.provider?.name ? ` on ${remote.provider.name}` : ''
+					}`,
+				},
+			)}`;
 		}
 
 		let label;
@@ -342,8 +346,8 @@ export class BranchTrackingStatusNode
 		if (this._log == null) {
 			const range =
 				this.upstreamType === 'ahead'
-					? createRevisionRange(this.status.upstream?.name, this.status.ref)
-					: createRevisionRange(this.status.ref, this.status.upstream?.name);
+					? createRevisionRange(this.status.upstream?.name, this.status.ref, '..')
+					: createRevisionRange(this.status.ref, this.status.upstream?.name, '..');
 
 			this._log = await this.view.container.git.getLog(this.uri.repoPath!, {
 				limit: this.limit ?? this.view.config.defaultItemLimit,

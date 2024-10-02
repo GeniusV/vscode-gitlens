@@ -16,7 +16,9 @@ import type {
 	BranchesViewConfig,
 	CommitsViewConfig,
 	ContributorsViewConfig,
+	DraftsViewConfig,
 	FileHistoryViewConfig,
+	LaunchpadViewConfig,
 	LineHistoryViewConfig,
 	PullRequestViewConfig,
 	RemotesViewConfig,
@@ -29,22 +31,24 @@ import type {
 	WorktreesViewConfig,
 } from '../config';
 import { viewsCommonConfigKeys, viewsConfigKeys } from '../config';
-import type { TreeViewCommandSuffixesByViewType, TreeViewIds, TreeViewTypes } from '../constants';
+import type { TreeViewCommandSuffixesByViewType } from '../constants.commands';
+import type { TrackedUsageFeatures } from '../constants.telemetry';
+import type { TreeViewIds, TreeViewTypes } from '../constants.views';
 import type { Container } from '../container';
-import { executeCoreCommand } from '../system/command';
-import { configuration } from '../system/configuration';
 import { debug, log } from '../system/decorators/log';
 import { once } from '../system/event';
 import { debounce } from '../system/function';
 import { Logger } from '../system/logger';
 import { getLogScope } from '../system/logger.scope';
 import { cancellable, isPromise } from '../system/promise';
-import type { TrackedUsageFeatures } from '../telemetry/usageTracker';
+import { executeCoreCommand } from '../system/vscode/command';
+import { configuration } from '../system/vscode/configuration';
 import type { BranchesView } from './branchesView';
 import type { CommitsView } from './commitsView';
 import type { ContributorsView } from './contributorsView';
 import type { DraftsView } from './draftsView';
 import type { FileHistoryView } from './fileHistoryView';
+import type { LaunchpadView } from './launchpadView';
 import type { LineHistoryView } from './lineHistoryView';
 import type { PageableViewNode, ViewNode } from './nodes/abstract/viewNode';
 import { isPageableViewNode } from './nodes/abstract/viewNode';
@@ -63,6 +67,7 @@ export type View =
 	| ContributorsView
 	| DraftsView
 	| FileHistoryView
+	| LaunchpadView
 	| LineHistoryView
 	| PullRequestView
 	| RemotesView
@@ -72,6 +77,41 @@ export type View =
 	| TagsView
 	| WorkspacesView
 	| WorktreesView;
+
+// prettier-ignore
+type TreeViewByType = {
+	[T in TreeViewTypes]: T extends 'branches'
+		? BranchesView
+		: T extends 'commits'
+		? CommitsView
+		: T extends 'contributors'
+		? ContributorsView
+		: T extends 'drafts'
+		? DraftsView
+		: T extends 'fileHistory'
+		? FileHistoryView
+		: T extends 'launchpad'
+		? LaunchpadView
+		: T extends 'lineHistory'
+		? LineHistoryView
+		: T extends 'pullRequest'
+		? PullRequestView
+		: T extends 'remotes'
+		? RemotesView
+		: T extends 'repositories'
+		? RepositoriesView
+		: T extends 'searchAndCompare'
+		? SearchAndCompareView
+		: T extends 'stashes'
+		? StashesView
+		: T extends 'tags'
+		? TagsView
+		: T extends 'workspaces'
+		? WorkspacesView
+		: T extends 'worktrees'
+		? WorktreesView
+		: View;
+};
 
 export type ViewsWithBranches = BranchesView | CommitsView | RemotesView | RepositoriesView | WorkspacesView;
 export type ViewsWithBranchesNode = BranchesView | RepositoriesView | WorkspacesView;
@@ -84,7 +124,7 @@ export type ViewsWithRepositories = RepositoriesView | WorkspacesView;
 export type ViewsWithRepositoriesNode = RepositoriesView | WorkspacesView;
 export type ViewsWithRepositoryFolders = Exclude<
 	View,
-	DraftsView | FileHistoryView | LineHistoryView | PullRequestView | RepositoriesView | WorkspacesView
+	DraftsView | FileHistoryView | LaunchpadView | LineHistoryView | PullRequestView | RepositoriesView | WorkspacesView
 >;
 export type ViewsWithStashes = StashesView | ViewsWithCommits;
 export type ViewsWithStashesNode = RepositoriesView | StashesView | WorkspacesView;
@@ -103,9 +143,11 @@ export abstract class ViewBase<
 		RootNode extends ViewNode,
 		ViewConfig extends
 			| BranchesViewConfig
-			| ContributorsViewConfig
-			| FileHistoryViewConfig
 			| CommitsViewConfig
+			| ContributorsViewConfig
+			| DraftsViewConfig
+			| FileHistoryViewConfig
+			| LaunchpadViewConfig
 			| LineHistoryViewConfig
 			| PullRequestViewConfig
 			| RemotesViewConfig
@@ -117,6 +159,14 @@ export abstract class ViewBase<
 	>
 	implements TreeDataProvider<ViewNode>, Disposable
 {
+	is<T extends keyof TreeViewByType>(type: T): this is TreeViewByType[T] {
+		return this.type === (type as unknown as Type);
+	}
+
+	isAny<T extends (keyof TreeViewByType)[]>(...types: T): this is TreeViewByType[T[number]] {
+		return types.includes(this.type as unknown as T[number]);
+	}
+
 	get id(): TreeViewIds<Type> {
 		return `gitlens.views.${this.type}`;
 	}

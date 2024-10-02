@@ -1,6 +1,5 @@
 import type { Range, Uri } from 'vscode';
-import type { DynamicAutolinkReference } from '../../annotations/autolinks';
-import type { AutolinkReference } from '../../config';
+import type { AutolinkReference, DynamicAutolinkReference } from '../../autolinks';
 import type { GkProviderId } from '../../gk/models/repositoryIdentities';
 import { isSha } from '../models/reference';
 import type { Repository } from '../models/repository';
@@ -22,6 +21,8 @@ export class GiteaRemote extends RemoteProvider {
 				{
 					prefix: '#',
 					url: `${this.baseUrl}/issues/<num>`,
+					alphanumeric: false,
+					ignoreCase: false,
 					title: `Open Issue #<num> on ${this.name}`,
 
 					type: 'issue',
@@ -85,7 +86,7 @@ export class GiteaRemote extends RemoteProvider {
 			if (index !== -1) {
 				const sha = path.substring(offset, index);
 				if (isSha(sha)) {
-					const uri = repository.toAbsoluteUri(path.substr(index), { validate: options?.validate });
+					const uri = repository.toAbsoluteUri(path.substring(index), { validate: options?.validate });
 					if (uri != null) return { uri: uri, startLine: startLine, endLine: endLine };
 				}
 			}
@@ -99,13 +100,13 @@ export class GiteaRemote extends RemoteProvider {
 			index = offset;
 			do {
 				branch = path.substring(offset, index);
-				possibleBranches.set(branch, path.substr(index));
+				possibleBranches.set(branch, path.substring(index));
 
 				index = path.indexOf('/', index + 1);
 			} while (index < path.length && index !== -1);
 
 			if (possibleBranches.size !== 0) {
-				const { values: branches } = await repository.getBranches({
+				const { values: branches } = await repository.git.getBranches({
 					filter: b => b.remote && possibleBranches.has(b.getNameWithoutRemote()),
 				});
 				for (const branch of branches) {

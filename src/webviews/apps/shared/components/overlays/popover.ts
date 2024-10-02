@@ -97,21 +97,25 @@ export class GlPopover extends GlElement {
 		.popover[data-current-placement^='top']::part(arrow) {
 			border-top-width: 0;
 			border-left-width: 0;
+			clip-path: polygon(0 50%, 100% 0, 100% 100%, 0 100%);
 		}
 
 		.popover[data-current-placement^='bottom']::part(arrow) {
 			border-bottom-width: 0;
 			border-right-width: 0;
+			clip-path: polygon(0 0, 100% 0, 100% 50%, 0 100%);
 		}
 
 		.popover[data-current-placement^='left']::part(arrow) {
 			border-bottom-width: 0;
 			border-left-width: 0;
+			clip-path: polygon(0 0, 100% 0, 100% 100%, 70% 100%, 0 30%);
 		}
 
 		.popover[data-current-placement^='right']::part(arrow) {
 			border-top-width: 0;
 			border-right-width: 0;
+			clip-path: polygon(0 0, 0 100%, 100% 100%, 100% 70%, 30% 0);
 		}
 
 		.popover__body {
@@ -161,7 +165,10 @@ export class GlPopover extends GlElement {
 	@property({ reflect: true })
 	placement: SlPopup['placement'] = 'bottom';
 
-	@property({ type: Boolean, reflect: true })
+	@property({ type: Object })
+	anchor?: string | HTMLElement | { getBoundingClientRect: () => Omit<DOMRect, 'toJSON'> };
+
+	@property({ reflect: true, type: Boolean })
 	disabled: boolean = false;
 
 	@property({ type: Number })
@@ -169,6 +176,9 @@ export class GlPopover extends GlElement {
 
 	@property({ reflect: true, type: Boolean })
 	open: boolean = false;
+
+	@property({ reflect: true, type: Boolean })
+	arrow: boolean = true;
 
 	/** The distance in pixels from which to offset the popover along its target. */
 	@property({ type: Number })
@@ -184,6 +194,10 @@ export class GlPopover extends GlElement {
 	 */
 	@property({ type: Boolean })
 	hoist = false;
+
+	get currentPlacement() {
+		return (this.popup?.getAttribute('data-current-placement') ?? this.placement) as SlPopup['placement'];
+	}
 
 	constructor() {
 		super();
@@ -368,6 +382,7 @@ export class GlPopover extends GlElement {
 				arrow:base__arrow
 			"
 			class="popover"
+			.anchor=${this.anchor}
 			placement=${this.placement}
 			distance=${this.distance}
 			skidding=${this.skidding}
@@ -377,7 +392,7 @@ export class GlPopover extends GlElement {
 			flip-padding="3"
 			flip
 			shift
-			arrow
+			?arrow=${this.arrow}
 			hover-bridge
 		>
 			<div slot="anchor" aria-describedby="popover">

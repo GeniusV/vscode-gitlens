@@ -1,6 +1,7 @@
 import type { TextEditor } from 'vscode';
 import { Disposable, Uri, window } from 'vscode';
-import { Commands, proBadge } from '../../../constants';
+import { proBadge } from '../../../constants';
+import { Commands } from '../../../constants.commands';
 import type { Container } from '../../../container';
 import type { CommitSelectedEvent, FileSelectedEvent } from '../../../eventBus';
 import { PlusFeatures } from '../../../features';
@@ -9,14 +10,14 @@ import { GitUri } from '../../../git/gitUri';
 import { getChangedFilesCount } from '../../../git/models/commit';
 import type { RepositoryChangeEvent } from '../../../git/models/repository';
 import { RepositoryChange, RepositoryChangeComparisonMode } from '../../../git/models/repository';
-import { executeCommand, registerCommand } from '../../../system/command';
-import { configuration } from '../../../system/configuration';
 import { createFromDateDelta } from '../../../system/date';
 import { debug } from '../../../system/decorators/log';
 import type { Deferrable } from '../../../system/function';
 import { debounce } from '../../../system/function';
 import { filter } from '../../../system/iterable';
-import { hasVisibleTextEditor, isTextEditor } from '../../../system/utils';
+import { executeCommand, registerCommand } from '../../../system/vscode/command';
+import { configuration } from '../../../system/vscode/configuration';
+import { hasVisibleTrackableTextEditor, isTrackableTextEditor } from '../../../system/vscode/utils';
 import { isViewFileNode } from '../../../views/nodes/abstract/viewFileNode';
 import type { IpcMessage } from '../../../webviews/protocol';
 import { updatePendingContext } from '../../../webviews/webviewController';
@@ -199,7 +200,7 @@ export class TimelineWebviewProvider implements WebviewProvider<State, State, Ti
 				const repository = this.container.git.getRepository(this._context.uri);
 				if (repository == null) return;
 
-				const commit = await repository.getCommit(e.params.data.id);
+				const commit = await repository.git.getCommit(e.params.data.id);
 				if (commit == null) return;
 
 				this.container.events.fire(
@@ -231,10 +232,10 @@ export class TimelineWebviewProvider implements WebviewProvider<State, State, Ti
 		}
 	}
 
-	@debug({ args: false })
+	@debug()
 	private onActiveEditorChanged(editor: TextEditor | undefined) {
 		if (editor != null) {
-			if (!isTextEditor(editor)) return;
+			if (!isTrackableTextEditor(editor)) return;
 
 			if (!this.container.git.isTrackable(editor.document.uri)) {
 				editor = undefined;
@@ -410,8 +411,12 @@ export class TimelineWebviewProvider implements WebviewProvider<State, State, Ti
 	}
 
 	private updatePendingEditor(editor: TextEditor | undefined, force?: boolean): boolean {
-		if (editor == null && hasVisibleTextEditor(this._context.uri ?? this._pendingContext?.uri)) return false;
-		if (editor != null && !isTextEditor(editor)) return false;
+		if (
+			(editor == null && hasVisibleTrackableTextEditor(this._context.uri ?? this._pendingContext?.uri)) ||
+			(editor != null && !isTrackableTextEditor(editor))
+		) {
+			return false;
+		}
 
 		return this.updatePendingUri(editor?.document.uri, force);
 	}

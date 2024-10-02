@@ -15,7 +15,7 @@ import type {
 } from '../../../../../plus/webviews/patchDetails/protocol';
 import { debounce } from '../../../../../system/function';
 import { flatCount } from '../../../../../system/iterable';
-import type { Serialized } from '../../../../../system/serialize';
+import type { Serialized } from '../../../../../system/vscode/serialize';
 import type {
 	TreeItemActionDetail,
 	TreeItemBase,
@@ -75,6 +75,9 @@ export class GlPatchCreate extends GlTreeBase {
 
 	@state()
 	generateBusy = false;
+
+	@state()
+	creationBusy = false;
 
 	// @state()
 	// patchTitle = this.create.title ?? '';
@@ -143,6 +146,9 @@ export class GlPatchCreate extends GlTreeBase {
 	}
 
 	override updated(changedProperties: Map<string, any>) {
+		if (changedProperties.has('state')) {
+			this.creationBusy = false;
+		}
 		if (changedProperties.has('generate')) {
 			this.generateBusy = false;
 			this.generateAiButton.scrollIntoView();
@@ -333,7 +339,7 @@ export class GlPatchCreate extends GlTreeBase {
 				</div>
 				<p class="button-container">
 					<span class="button-group button-group--single">
-						<gl-button full @click=${(e: Event) => this.onDebouncedCreateAll(e)}
+						<gl-button ?disabled=${this.creationBusy} full @click=${(e: Event) => this.onCreateAll(e)}
 							>Create ${draftName}</gl-button
 						>
 					</span>
@@ -628,9 +634,11 @@ export class GlPatchCreate extends GlTreeBase {
 		// }
 		// this.createPatch([change]);
 		this.createPatch();
+		if (!this.state?.create) {
+			return;
+		}
+		this.creationBusy = true;
 	}
-
-	private onDebouncedCreateAll = debounce(this.onCreateAll, 250);
 
 	private onSelectCreateOption(_e: CustomEvent<{ target: MenuItem }>) {
 		// const target = e.detail?.target;
@@ -766,7 +774,7 @@ export class GlPatchCreate extends GlTreeBase {
 		this.emit('gl-patch-file-open', {
 			...file,
 			showOptions: {
-				preview: false,
+				preview: !e.detail.dblClick,
 				viewColumn: e.detail.altKey ? BesideViewColumn : undefined,
 			},
 		});
@@ -779,7 +787,7 @@ export class GlPatchCreate extends GlTreeBase {
 		this.emit('gl-patch-file-stage', {
 			...file,
 			showOptions: {
-				preview: false,
+				preview: !e.detail.dblClick,
 				viewColumn: e.detail.altKey ? BesideViewColumn : undefined,
 			},
 		});
@@ -792,7 +800,7 @@ export class GlPatchCreate extends GlTreeBase {
 		this.emit('gl-patch-file-unstage', {
 			...file,
 			showOptions: {
-				preview: false,
+				preview: !e.detail.dblClick,
 				viewColumn: e.detail.altKey ? BesideViewColumn : undefined,
 			},
 		});

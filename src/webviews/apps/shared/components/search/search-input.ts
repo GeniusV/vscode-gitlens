@@ -1,39 +1,15 @@
 import { css, html } from 'lit';
 import { customElement, property, query, state } from 'lit/decorators.js';
-import type { SearchQuery } from '../../../../../git/search';
+import type { SearchOperators, SearchOperatorsLongForm, SearchQuery } from '../../../../../constants.search';
+import { searchOperationHelpRegex, searchOperatorsToLongFormMap } from '../../../../../constants.search';
 import type { Deferrable } from '../../../../../system/function';
 import { debounce } from '../../../../../system/function';
 import { GlElement } from '../element';
-import type { PopMenu } from '../overlays/pop-menu';
+import type { GlPopover } from '../overlays/popover';
 import '../code-icon';
+import '../menu';
+import '../overlays/popover';
 import '../overlays/tooltip';
-
-export type SearchOperators =
-	| '=:'
-	| 'message:'
-	| '@:'
-	| 'author:'
-	| '#:'
-	| 'commit:'
-	| '?:'
-	| 'file:'
-	| '~:'
-	| 'change:';
-
-export type HelpTypes = 'message:' | 'author:' | 'commit:' | 'file:' | 'change:';
-
-const operatorsHelpMap = new Map<SearchOperators, HelpTypes>([
-	['=:', 'message:'],
-	['message:', 'message:'],
-	['@:', 'author:'],
-	['author:', 'author:'],
-	['#:', 'commit:'],
-	['commit:', 'commit:'],
-	['?:', 'file:'],
-	['file:', 'file:'],
-	['~:', 'change:'],
-	['change:', 'change:'],
-]);
 
 export interface SearchNavigationEventDetail {
 	direction: 'first' | 'previous' | 'next' | 'last';
@@ -58,6 +34,14 @@ export class GlSearchInput extends GlElement {
 		}
 
 		:host {
+			--gl-search-input-background: var(--vscode-input-background);
+			--gl-search-input-foreground: var(--vscode-input-foreground);
+			--gl-search-input-border: var(--vscode-input-border);
+			--gl-search-input-placeholder: var(
+				--vscode-editor-placeholder\\\.foreground,
+				var(--vscode-input-placeholderForeground)
+			);
+
 			display: inline-flex;
 			flex-direction: row;
 			align-items: center;
@@ -74,7 +58,7 @@ export class GlSearchInput extends GlElement {
 			gap: 0.2rem;
 			width: 3.2rem;
 			height: 2.4rem;
-			color: var(--vscode-input-foreground);
+			color: var(--gl-search-input-foreground);
 			cursor: pointer;
 			border-radius: 3px;
 		}
@@ -98,11 +82,11 @@ export class GlSearchInput extends GlElement {
 		input {
 			width: 100%;
 			height: 2.4rem;
-			background-color: var(--vscode-input-background);
-			color: var(--vscode-input-foreground);
-			border: 1px solid var(--vscode-input-border);
+			background-color: var(--gl-search-input-background);
+			color: var(--gl-search-input-foreground);
+			border: 1px solid var(--gl-search-input-border);
 			border-radius: 0.25rem;
-			padding: 0 6.6rem 1px 0.4rem;
+			padding: 0 6.6rem 1px 0.7rem;
 			font-family: inherit;
 			font-size: inherit;
 		}
@@ -111,7 +95,7 @@ export class GlSearchInput extends GlElement {
 			outline-offset: -1px;
 		}
 		input::placeholder {
-			color: var(--vscode-input-placeholderForeground);
+			color: var(--gl-search-input-placeholder);
 		}
 
 		input::-webkit-search-cancel-button {
@@ -144,7 +128,7 @@ export class GlSearchInput extends GlElement {
 			z-index: 1000;
 			background-color: var(--vscode-inputValidation-infoBackground);
 			border: 1px solid var(--vscode-inputValidation-infoBorder);
-			color: var(--vscode-input-foreground);
+			color: var(--gl-search-input-foreground);
 			font-size: 1.2rem;
 			line-height: 1.4;
 		}
@@ -170,7 +154,7 @@ export class GlSearchInput extends GlElement {
 
 		button {
 			padding: 0;
-			color: var(--vscode-input-foreground);
+			color: var(--gl-search-input-foreground);
 			border: 1px solid transparent;
 			background: none;
 		}
@@ -276,10 +260,6 @@ export class GlSearchInput extends GlElement {
 			padding: 0 0.5rem;
 		}
 
-		menu-list {
-			padding-bottom: 0.5rem;
-		}
-
 		.menu-button {
 			display: block;
 			width: 100%;
@@ -294,13 +274,29 @@ export class GlSearchInput extends GlElement {
 			color: var(--vscode-menu-selectionForeground);
 			background-color: var(--vscode-menu-selectionBackground);
 		}
+
+		code {
+			display: inline-block;
+			backdrop-filter: brightness(1.3);
+			border-radius: 3px;
+			padding: 0px 4px;
+			font-family: var(--vscode-editor-font-family);
+		}
+
+		.popover {
+			margin-left: -0.25rem;
+		}
+		.popover::part(body) {
+			padding: 0 0 0.5rem 0;
+			font-size: var(--vscode-font-size);
+		}
 	`;
 
 	@query('input') input!: HTMLInputElement;
-	@query('pop-menu') popmenu!: PopMenu;
+	@query('gl-popover') popoverEl!: GlPopover;
 
 	@state() errorMessage = '';
-	@state() helpType?: HelpTypes;
+	@state() helpType?: SearchOperatorsLongForm;
 
 	@property({ type: String }) label = 'Search';
 	@property({ type: String }) placeholder = 'Search...';
@@ -318,7 +314,7 @@ export class GlSearchInput extends GlElement {
 	}
 
 	handleFocus(_e: Event) {
-		this.popmenu.close();
+		void this.popoverEl.hide();
 	}
 
 	handleClear(_e: Event) {
@@ -340,19 +336,16 @@ export class GlSearchInput extends GlElement {
 		const cursor = this.input?.selectionStart;
 		const value = this.value;
 		if (cursor != null && value.length !== 0 && value.includes(':')) {
-			const regex =
-				/(?:^|[\b\s]*)((=:|message:|@:|author:|#:|commit:|\?:|file:|~:|change:)(?:"[^"]*"?|\w*))(?:$|[\b\s])/gi;
-
+			const regex = new RegExp(searchOperationHelpRegex, 'g');
 			let match;
 			do {
 				match = regex.exec(value);
 				if (match == null) break;
 
-				const [, part, op] = match;
+				const [, , part, op] = match;
 
-				// console.log('updateHelpText', cursor, match.index, match.index + part.trim().length, match);
-				if (cursor > match.index && cursor <= match.index + part.trim().length) {
-					this.helpType = operatorsHelpMap.get(op as SearchOperators);
+				if (cursor > match.index && cursor <= match.index + (part?.trim().length ?? 0)) {
+					this.helpType = searchOperatorsToLongFormMap.get(op as SearchOperators);
 					return;
 				}
 			} while (true);
@@ -418,10 +411,11 @@ export class GlSearchInput extends GlElement {
 		window.requestAnimationFrame(() => {
 			this.updateHelpText();
 			// `@me` can be searched right away since it doesn't need additional text
-			if (token === '@me') {
+			if (token === '@me' || token === 'is:stash' || token === 'type:stash') {
 				this.debouncedOnSearchChanged();
 			}
 			this.input.focus();
+			this.input.selectionStart = this.value.length;
 		});
 	}
 
@@ -455,64 +449,64 @@ export class GlSearchInput extends GlElement {
 	}
 
 	override render() {
-		return html`<gl-tooltip hoist placement="top" style="margin-left: -0.25rem;"
-				><pop-menu>
-					<button type="button" class="action-button" slot="trigger" aria-label="${this.label}">
+		return html`<gl-popover
+				class="popover"
+				trigger="focus"
+				hoist
+				placement="bottom-start"
+				.arrow=${false}
+				distance="0"
+			>
+				<gl-tooltip hoist placement="top" slot="anchor">
+					<button type="button" class="action-button" aria-label="${this.label}">
 						<code-icon icon="search" aria-hidden="true"></code-icon>
 						<code-icon class="action-button__more" icon="chevron-down" aria-hidden="true"></code-icon>
 					</button>
-					<menu-list slot="content">
-						<menu-label>Search by</menu-label>
-						<menu-item role="none">
-							<button class="menu-button" type="button" @click="${() => this.handleInsertToken('@me')}">
-								My changes <small>@me</small>
-							</button>
-						</menu-item>
-						<menu-item role="none">
-							<button
-								class="menu-button"
-								type="button"
-								@click="${() => this.handleInsertToken('message:')}"
-							>
-								Message <small>message: or =:</small>
-							</button>
-						</menu-item>
-						<menu-item role="none">
-							<button
-								class="menu-button"
-								type="button"
-								@click="${() => this.handleInsertToken('author:')}"
-							>
-								Author <small>author: or @:</small>
-							</button>
-						</menu-item>
-						<menu-item role="none">
-							<button
-								class="menu-button"
-								type="button"
-								@click="${() => this.handleInsertToken('commit:')}"
-							>
-								Commit SHA <small>commit: or #:</small>
-							</button>
-						</menu-item>
-						<menu-item role="none">
-							<button class="menu-button" type="button" @click="${() => this.handleInsertToken('file:')}">
-								File <small>file: or ?:</small>
-							</button>
-						</menu-item>
-						<menu-item role="none">
-							<button
-								class="menu-button"
-								type="button"
-								@click="${() => this.handleInsertToken('change:')}"
-							>
-								Change <small>change: or ~:</small>
-							</button>
-						</menu-item>
-					</menu-list>
-				</pop-menu>
-				<span slot="content">${this.label}</span>
-			</gl-tooltip>
+					<span slot="content">${this.label}</span>
+				</gl-tooltip>
+				<div slot="content">
+					<menu-label>Search by</menu-label>
+					<menu-item role="none">
+						<button class="menu-button" type="button" @click="${() => this.handleInsertToken('@me')}">
+							My changes <small>@me</small>
+						</button>
+					</menu-item>
+					<menu-item role="none">
+						<button class="menu-button" type="button" @click="${() => this.handleInsertToken('message:')}">
+							Message <small>message: or =:</small>
+						</button>
+					</menu-item>
+					<menu-item role="none">
+						<button class="menu-button" type="button" @click="${() => this.handleInsertToken('author:')}">
+							Author <small>author: or @:</small>
+						</button>
+					</menu-item>
+					<menu-item role="none">
+						<button class="menu-button" type="button" @click="${() => this.handleInsertToken('commit:')}">
+							Commit SHA <small>commit: or #:</small>
+						</button>
+					</menu-item>
+					<menu-item role="none">
+						<button class="menu-button" type="button" @click="${() => this.handleInsertToken('file:')}">
+							File <small>file: or ?:</small>
+						</button>
+					</menu-item>
+					<menu-item role="none">
+						<button class="menu-button" type="button" @click="${() => this.handleInsertToken('change:')}">
+							Change <small>change: or ~:</small>
+						</button>
+					</menu-item>
+					<menu-item role="none">
+						<button
+							class="menu-button"
+							type="button"
+							@click="${() => this.handleInsertToken('type:stash')}"
+						>
+							Type <small>type:stash or is:stash</small>
+						</button>
+					</menu-item>
+				</div>
+			</gl-popover>
 			<div class="field">
 				<input
 					id="search"
@@ -533,23 +527,29 @@ export class GlSearchInput extends GlElement {
 					${this.errorMessage !== '' ? html`${this.errorMessage}${this.helpType ? html`<br />` : ''}` : ''}
 					${this.helpType === 'message:'
 						? html`<span
-								>Message: use quotes to search for phrases, e.g. message:"Updates dependencies"</span
+								>Message: use quotes to search for phrases, e.g.
+								<code>message:"Updates dependencies"</code></span
 						  >`
 						: ''}
 					${this.helpType === 'author:'
-						? html`<span>Author: use a user's account, e.g. author:eamodio</span>`
+						? html`<span>Author: use a user's account, e.g. <code>author:eamodio</code></span>`
 						: ''}
 					${this.helpType === 'commit:'
-						? html`<span>Commit: use a full or short Commit SHA, e.g. commit:4ce3a</span>`
+						? html`<span>Commit: use a full or short Commit SHA, e.g. <code>commit:4ce3a</code></span>`
 						: ''}
 					${this.helpType === 'file:'
 						? html`<span
-								>File: use a filename with extension, e.g. file:package.json, or a glob pattern, e.g.
-								file:*graph*</span
+								>File: use a filename with extension, e.g. <code>file:package.json</code>, or a glob
+								pattern, e.g. <code>file:*graph*</code></span
 						  >`
 						: ''}
 					${this.helpType === 'change:'
-						? html`<span>Change: use a regex pattern, e.g. change:update&#92;(param</span>`
+						? html`<span>Change: use a regex pattern, e.g. <code>change:update&#92;(param</code></span>`
+						: ''}
+					${this.helpType === 'type:'
+						? html`<span
+								>Type: use <code>stash</code> to search only stashes, e.g. <code>type:stash</code></span
+						  >`
 						: ''}
 				</div>
 			</div>
@@ -595,7 +595,6 @@ export class GlSearchInput extends GlElement {
 						?disabled="${!this.matchRegex}"
 						aria-checked="${this.matchCaseOverride}"
 						@click="${this.handleMatchCase}"
-						@focus="${this.handleFocus}"
 					>
 						<code-icon icon="case-sensitive"></code-icon>
 					</button>
@@ -608,7 +607,6 @@ export class GlSearchInput extends GlElement {
 						aria-label="Use Regular Expression"
 						aria-checked="${this.matchRegex}"
 						@click="${this.handleMatchRegex}"
-						@focus="${this.handleFocus}"
 					>
 						<code-icon icon="regex"></code-icon>
 					</button>

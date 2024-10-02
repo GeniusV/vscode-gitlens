@@ -1,8 +1,16 @@
 import type { AuthenticationSession } from 'vscode';
-import type { IntegrationId } from '../providers/models';
-import { HostingIntegrationId, IssueIntegrationId, SelfHostedIntegrationId } from '../providers/models';
+import type { IntegrationId, SupportedCloudIntegrationIds } from '../../../constants.integrations';
+import {
+	HostingIntegrationId,
+	IssueIntegrationId,
+	SelfHostedIntegrationId,
+	supportedCloudIntegrationIds,
+	supportedCloudIntegrationIdsExperimental,
+} from '../../../constants.integrations';
+import { configuration } from '../../../system/vscode/configuration';
 
 export interface ProviderAuthenticationSession extends AuthenticationSession {
+	readonly cloud: boolean;
 	readonly expiresAt?: Date;
 }
 
@@ -30,7 +38,15 @@ export type CloudIntegrationAuthType = 'oauth' | 'pat';
 
 export const CloudIntegrationAuthenticationUriPathPrefix = 'did-authenticate-cloud-integration';
 
-export const supportedCloudIntegrationIds: IntegrationId[] = [IssueIntegrationId.Jira];
+export function getSupportedCloudIntegrationIds(): SupportedCloudIntegrationIds[] {
+	return configuration.get('cloudIntegrations.enabled', undefined, true)
+		? supportedCloudIntegrationIdsExperimental
+		: supportedCloudIntegrationIds;
+}
+
+export function isSupportedCloudIntegrationId(id: string): id is SupportedCloudIntegrationIds {
+	return getSupportedCloudIntegrationIds().includes(id as SupportedCloudIntegrationIds);
+}
 
 export const toIntegrationId: { [key in CloudIntegrationType]: IntegrationId } = {
 	jira: IssueIntegrationId.Jira,
